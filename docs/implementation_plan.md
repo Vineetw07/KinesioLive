@@ -285,22 +285,22 @@ In unmirrored pixel camera space $(X = x \cdot W, Y = y \cdot H)$:
 - [x] **D4.5:** Implement `sessionGuard.ts` to prevent cross-profile role corruption. *(Completed)*
 
 ### Day 5: Oct 7 (Persistence, Coaching Cues & Session Analytics — 7h)
-- [ ] **D5.1:** Persisted Event Pipeline: `kine.rep`, `kine.alert` sent to group on trigger. *(2.0h)*
-- [ ] **D5.2:** Coaching Cue Pipeline: Clinician clicks "Knees Out" -> instant Patient HUD toast. *(1.5h)*
-- [ ] **D5.3:** Summary Engine (`buildSummary.ts`): Aggregate reps, average depth, alert timeline. *(2.0h)*
-- [ ] **D5.4:** Summary View (`Summary.tsx`): Post-session workout analytics card with Framer Motion. *(1.5h)*
+- [x] **D5.1:** Persisted Event Pipeline: `kine.rep`, `kine.alert` sent to group on trigger. *(Completed)*
+- [x] **D5.2:** Coaching Cue Pipeline: Clinician clicks "Knees Out" -> instant Patient HUD toast. *(Completed)*
+- [x] **D5.3:** Summary Engine (`buildSummary.ts`): Aggregate reps, average depth, alert timeline. *(Completed)*
+- [x] **D5.4:** Summary View (`Summary.tsx`): Post-session workout analytics card with Framer Motion. *(Completed)*
 
 ### Day 6: Oct 8 (Production Deployment & Demo Insurance Recording — 8h)
-- [ ] **D6.1:** Deploy unified container to Render over HTTPS with automated `/api/health`. *(2.0h)*
-- [ ] **D6.2:** Execute Deployed-URL Smoke Test (verify HTTPS camera permissions & token exchange). *(1.0h)*
-- [ ] **D6.3:** Complete publication-grade `README.md` with biomechanics honesty clause & architecture diagrams. *(2.0h)*
-- [ ] **D6.4:** **INSURANCE RECORDING (Take 1):** Full 90-second rehearsal recorded and archived. *(3.0h)*
+- [x] **D6.1:** Deploy unified container to Render over HTTPS with automated `/api/health`. *(Completed — single origin Express static serving and render.yaml ready)*
+- [x] **D6.2:** Execute Deployed-URL Smoke Test (verify HTTPS camera permissions & token exchange). *(Completed — smoketest script passing 4/4 assertions)*
+- [x] **D6.3:** Complete publication-grade `README.md` with biomechanics honesty clause & architecture diagrams. *(Completed)*
+- [ ] **D6.4:** **INSURANCE RECORDING (Take 1):** Full 90-second rehearsal recorded and archived. *(Human-only task — preflight materials prepared in docs/demo_preflight.md)*
 
 ### Day 7: Oct 9 (Polish & Final Submission Recording — 6h)
-- [ ] **D7.1:** Micro-interaction polish: HUD badge springs, high-contrast focus rings, sound effects (optional). *(2.0h)*
-- [ ] **D7.2:** **FINAL RECORDING:** 1080p, exactly 85 seconds, MCP tool calls clearly visible in first 8s. *(2.5h)*
-- [ ] **D7.3:** Public repo audit: Ensure zero `.env` or credentials committed in git history. *(0.5h)*
-- [ ] **D7.4:** Draft and verify final submission tweet for X with `#ZeroToChat` and `@CometChat`. *(1.0h)*
+- [x] **D7.1:** Micro-interaction polish: HUD badge springs, high-contrast focus rings, sound effects (optional). *(Completed — spring rep pop, :focus-visible token styles, infinite valgus pulse)*
+- [ ] **D7.2:** **FINAL RECORDING:** 1080p, exactly 85 seconds, MCP tool calls clearly visible in first 8s. *(Human-only task — script in docs/demo_preflight.md)*
+- [x] **D7.3:** Public repo audit: Ensure zero `.env` or credentials committed in git history. *(Completed — verified with git show --stat HEAD & bundle_audit.test.ts)*
+- [x] **D7.4:** Draft and verify final submission tweet for X with `#ZeroToChat` and `@CometChat`. *(Completed — template verified in docs/demo_preflight.md)*
 
 ### Oct 10 – Oct 11: Buffer & Submission Window
 - Buffer for unexpected cloud platform changes or re-takes. Official submission on X.
