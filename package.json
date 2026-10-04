@@ -1,0 +1,16 @@
+{
+  "name": "kinesiolive-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "KinesioLive - Real-Time Biomechanical Telemetry & Telerehabilitation Monorepo",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "vitest run",
+    "smoketest": "node --experimental-strip-types tests/e2e/smoketest_deployed.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.7"
+  }
+}

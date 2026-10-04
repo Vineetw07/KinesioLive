@@ -1,0 +1,192 @@
+@import './styles/tokens.css';
+
+:root {
+  /* Compatibility aliases mapped to semantic design tokens */
+  --bg-primary: var(--surface-app-frame);
+  --bg-surface: var(--surface-canvas);
+  --bg-elevated: var(--surface-canvas-subtle);
+  --border-subtle: var(--surface-border-subtle);
+  --accent-cyan: var(--accent-lime);
+  --accent-blue: var(--accent-slate);
+  --accent-emerald: var(--status-stable);
+  --accent-amber: var(--status-warning);
+  --accent-rose: var(--status-critical);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--surface-app-frame);
+  color: var(--text-primary);
+  min-height: 100vh;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.kine-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+}
+
+.kine-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: var(--space-8);
+}
+
+.kine-logo-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kine-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: var(--accent-lime-tint);
+  color: var(--text-primary);
+  border: 1px solid var(--surface-border-subtle);
+}
+
+.kine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-6);
+}
+
+.kine-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  box-shadow: var(--shadow-bento);
+}
+
+.kine-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--surface-border-subtle);
+  padding-bottom: var(--space-3);
+}
+
+.kine-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.65rem 1.25rem;
+  font-weight: 500;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  background-color: var(--accent-slate);
+  color: var(--text-on-dark-primary);
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.kine-button:hover:not(:disabled) {
+  background-color: var(--surface-dark-card-hover);
+}
+
+.kine-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kine-button-secondary {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.kine-button-secondary:hover:not(:disabled) {
+  background-color: var(--surface-border-strong);
+}
+
+.kine-input {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.kine-input:focus {
+  border-color: var(--accent-lime);
+}
+
+.kine-role-selector {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.kine-role-btn {
+  flex: 1;
+  padding: 0.75rem;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.kine-role-btn.active {
+  background-color: var(--accent-lime-tint);
+  border-color: var(--accent-lime);
+  color: var(--text-primary);
+}
+
+.kine-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kine-stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.kine-stat-value {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.kine-status-online {
+  color: var(--status-stable);
+}
+
+.kine-status-offline {
+  color: var(--status-critical);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-lime);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}

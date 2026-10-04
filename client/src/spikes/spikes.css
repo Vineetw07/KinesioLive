@@ -1,0 +1,398 @@
+/**
+ * Spikes Interactive Testbed HUD Styles
+ * High-Density Telerehabilitation Biomechanics & WebRTC Benchmark Dashboard
+ */
+
+.kine-spikes-root {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+}
+
+/* Master Action & Status Bar */
+.kine-master-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+}
+
+.kine-master-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.kine-btn-run-all {
+  background: linear-gradient(135deg, #06b6d4, #3b82f6);
+  color: #ffffff;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.kine-btn-run-all:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.kine-btn-run-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kine-btn-reset {
+  background-color: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.kine-btn-reset:hover:not(:disabled) {
+  background-color: #374151;
+  color: var(--text-primary);
+}
+
+/* Tabs Navigation */
+.kine-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  padding: 0.5rem;
+}
+
+.kine-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.kine-tab-btn:hover {
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.kine-tab-btn.active {
+  background-color: var(--bg-elevated);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Status Chips */
+.kine-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  line-height: 1;
+}
+
+.kine-chip-pass {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.kine-chip-fail {
+  background-color: rgba(244, 63, 94, 0.15);
+  color: var(--accent-rose);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.kine-chip-running {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: var(--accent-amber);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.kine-chip-idle {
+  background-color: rgba(107, 114, 128, 0.15);
+  color: var(--text-muted);
+  border: 1px solid rgba(107, 114, 128, 0.25);
+}
+
+.kine-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+/* Benchmark Metric Card */
+.kine-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.kine-metric-card {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.kine-metric-card-pass {
+  border-left: 3px solid var(--accent-emerald);
+}
+
+.kine-metric-card-fail {
+  border-left: 3px solid var(--accent-rose);
+}
+
+.kine-metric-card-running {
+  border-left: 3px solid var(--accent-amber);
+}
+
+.kine-metric-title {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.kine-metric-val-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.kine-metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.kine-metric-unit {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.kine-metric-threshold {
+  font-size: 0.725rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+/* Kill-Switch Evaluation Gate Table */
+.kine-gate-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.kine-gate-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 1rem;
+}
+
+.kine-gate-badge-pass {
+  padding: 0.4rem 0.9rem;
+  border-radius: 0.5rem;
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--accent-emerald);
+  color: var(--accent-emerald);
+  font-weight: 700;
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kine-gate-badge-blocked {
+  padding: 0.4rem 0.9rem;
+  border-radius: 0.5rem;
+  background-color: rgba(244, 63, 94, 0.15);
+  border: 1px solid var(--accent-rose);
+  color: var(--accent-rose);
+  font-weight: 700;
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kine-gate-table-wrapper {
+  overflow-x: auto;
+}
+
+.kine-gate-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.kine-gate-table th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.725rem;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.kine-gate-table td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: middle;
+}
+
+.kine-gate-table tr:last-child td {
+  border-bottom: none;
+}
+
+.kine-gate-table tr:hover td {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* S1 Pose Canvas & Video Wrapper */
+.kine-video-canvas-container {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  height: 380px;
+  background-color: #000000;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.kine-video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kine-canvas-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Calls v5 Video Container */
+.kine-call-webrtc-container {
+  width: 100%;
+  min-height: 440px;
+  background-color: #050811;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-subtle);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Telemetry Log Stream */
+.kine-log-console {
+  background-color: #05070d;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.kine-log-entry {
+  display: flex;
+  gap: 0.75rem;
+  line-height: 1.4;
+}
+
+.kine-log-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.kine-log-badge {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.kine-log-msg {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.kine-log-success .kine-log-msg { color: var(--accent-emerald); }
+.kine-log-warn .kine-log-msg { color: var(--accent-amber); }
+.kine-log-error .kine-log-msg { color: var(--accent-rose); }
+.kine-log-info .kine-log-msg { color: var(--text-primary); }
+
+/* Progress Bar */
+.kine-progress-bar-wrap {
+  width: 100%;
+  height: 8px;
+  background-color: var(--bg-elevated);
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.kine-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+  transition: width 0.1s linear;
+}

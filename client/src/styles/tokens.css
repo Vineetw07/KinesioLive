@@ -1,0 +1,81 @@
+:root {
+  /* =========================================================================
+     1. Surface & Canvas Tokens
+     ========================================================================= */
+  --surface-app-frame: #F4F6EA;        /* Soft ambient backdrop outside canvas */
+  --surface-canvas: #FFFFFF;           /* Primary floating island canvas */
+  --surface-canvas-subtle: #F9FAFB;    /* Secondary card background */
+  --surface-border-subtle: #F0F1F5;    /* 1px structural dividing lines */
+  --surface-border-strong: #E5E7EB;    /* Form controls & search borders */
+  
+  --surface-dark-sidebar: #131417;     /* High-contrast left navigation bar */
+  --surface-dark-card: #18191C;        /* Inverted bottom-right anchor bento tile */
+  --surface-dark-card-border: #26282E; /* Border on dark surfaces */
+  --surface-dark-card-hover: #222429;  /* Elevated state for dark components */
+
+  /* =========================================================================
+     2. Typography & Contrast Tokens (WCAG 2.1 AA Guaranteed)
+     ========================================================================= */
+  --text-primary: #111827;             /* Heading & primary metric text (14:1) */
+  --text-secondary: #4B5563;           /* Captions & secondary metrics (5.4:1) */
+  --text-muted: #6B7280;               /* Helper text, timestamps (4.6:1) */
+  --text-disabled: #9CA3AF;            /* Disabled state text only */
+  
+  --text-on-dark-primary: #F9FAFB;     /* High-contrast text on dark surfaces */
+  --text-on-dark-secondary: #94A3B8;   /* Muted labels on dark surfaces */
+  --text-on-dark-muted: #64748B;       /* Secondary captions on dark surfaces */
+
+  /* =========================================================================
+     3. Biomechanical Brand & Accent Tokens
+     ========================================================================= */
+  --accent-lime: #DAFE52;              /* Electric chartreuse - Active state & target */
+  --accent-lime-hover: #C5EA3F;        /* Interactive press/hover state */
+  --accent-lime-tint: rgba(218, 254, 82, 0.18); /* Soft glow & badge fills */
+  
+  --accent-lavender: #C8B6FF;          /* Secondary metric volume / Gluteal load */
+  --accent-lavender-tint: rgba(200, 182, 255, 0.22);
+  
+  --accent-slate: #2D2F36;             /* Tertiary grouping / Posterior load */
+  --accent-slate-tint: rgba(45, 47, 54, 0.12);
+
+  --accent-cyan: #06B6D4;                            /* Coaching cue accent */
+  --accent-cyan-tint: rgba(6, 182, 212, 0.18);       /* Coaching cue glow fill */
+
+  /* =========================================================================
+     4. Biomechanical Health State Tokens
+     ========================================================================= */
+  --status-stable: #10B981;            /* Normal joint alignment (<8% valgus) */
+  --status-warning: #F59E0B;           /* Mild deviation (8-12% valgus) */
+  --status-critical: #EF4444;          /* Form breakdown alert (>12% valgus) */
+  --status-lost: #6B7280;              /* Landmark visibility < 0.65 */
+
+  /* =========================================================================
+     5. Spatial Scale (Strict 8pt Rhythm)
+     ========================================================================= */
+  --space-0-5: 0.125rem; /* 2px */
+  --space-1:   0.25rem;  /* 4px */
+  --space-2:   0.5rem;   /* 8px */
+  --space-3:   0.75rem;  /* 12px */
+  --space-4:   1.0rem;   /* 16px */
+  --space-5:   1.25rem;  /* 20px */
+  --space-6:   1.5rem;   /* 24px */
+  --space-8:   2.0rem;   /* 32px */
+  --space-10:  2.5rem;   /* 40px */
+  --space-12:  3.0rem;   /* 48px */
+
+  /* =========================================================================
+     6. Curvature & Elevation Hierarchy
+     ========================================================================= */
+  --radius-outer-canvas: 2.25rem;  /* 36px - Floating main application container */
+  --radius-bento-card: 1.5rem;     /* 24px - Inner Bento widgets */
+  --radius-control: 1.0rem;        /* 16px - Inputs, search, small cards */
+  --radius-pill: 9999px;           /* Full pill badges, primary CTA buttons */
+
+  --shadow-canvas: 0 20px 40px -15px rgba(0, 0, 0, 0.05), 0 0 1px 1px rgba(0, 0, 0, 0.03);
+  --shadow-bento: 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+  --shadow-glow-lime: 0 0 16px -2px rgba(218, 254, 82, 0.45);
+  --shadow-glow-cyan: 0 0 16px -2px rgba(6, 182, 212, 0.45);
+
+  /* Typography Base */
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: kinesiolive
+    env: node
+    region: oregon
+    buildCommand: npm install -g pnpm@9 && pnpm install --frozen-lockfile && pnpm -r run build
+    startCommand: node server/dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: COMETCHAT_APP_ID
+        sync: false
+      - key: COMETCHAT_REGION
+        sync: false
+      - key: COMETCHAT_AUTH_KEY
+        sync: false
+      - key: COMETCHAT_REST_API_KEY
+        sync: false
