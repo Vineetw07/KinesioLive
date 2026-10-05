@@ -6,6 +6,29 @@
 
 ---
 
+## 🤖 Agent Append Protocol (Read Before Logging)
+
+This is a **live document**. Whenever a security observation, architectural risk, or performance finding is discovered — during development, code review, or QA audits — append it to the relevant section **immediately** when discovered. Do not batch findings.
+
+**Rules for appending:**
+- Append under the most relevant existing section: `## 1` (Security), `## 2` (Performance), or `## 3` (WebRTC/Media).
+- If a finding spans multiple sections, put it under the primary concern.
+- Only append if there is a real observation. Do NOT append "no issues found" notes here — silence is correct for passing checks.
+- If the finding also constitutes a functional bug, it must ALSO be logged in `docs/bugs.md`.
+- Reference the QA check ID (e.g. `M2-A`) if found during an audit session.
+
+**Block format to append:**
+```markdown
+### 🔍 Audit Finding [YYYY-MM-DD] — <Short Title>
+- **Check:** <QA check ID, e.g. M1-A, or "Development" if found outside QA>
+- **Observation:** <Exact description. File and line number if applicable.>
+- **Severity:** P0 demo-blocker | P1 functional defect | P2 edge-case | P3 documentation
+- **Recommendation:** <What should be done. Do NOT apply the fix — describe it only.>
+```
+
+---
+
+
 ## 1. Security Surface & Invariant Audit
 
 ### 🚨 Critical Invariants

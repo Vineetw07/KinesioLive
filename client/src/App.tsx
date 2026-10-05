@@ -138,9 +138,14 @@ export const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
 
+    const targetSessionId = sessionIdInput.trim() || sessionId;
+    if (targetSessionId) {
+      setSessionId(targetSessionId);
+    }
+
     const requestPayload: SessionRequest = {
       role: activeRole,
-      sessionId: sessionIdInput.trim() ? sessionIdInput.trim() : undefined,
+      sessionId: targetSessionId ? targetSessionId : undefined,
     };
 
     try {
@@ -441,7 +446,15 @@ export const App: React.FC = () => {
                 value={sessionIdInput}
                 onChange={(e) => {
                   setSessionIdInput(e.target.value);
-                  setSessionId(e.target.value.trim());
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const trimmed = sessionIdInput.trim();
+                    if (trimmed) {
+                      setSessionId(trimmed);
+                    }
+                    handleConnect();
+                  }
                 }}
                 placeholder="e.g. kine-studio-demo"
                 style={{

@@ -1,1 +1,0 @@
-{"version":3,"file":"motionPresets.d.ts","sourceRoot":"","sources":["motionPresets.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,UAAU,EAAE,MAAM,eAAe,CAAC;AAE3C,eAAO,MAAM,aAAa;IACxB,kEAAkE;YAK7D,UAAU;IAEf,uEAAuE;YAKlE,UAAU;IAEf,qEAAqE;YAKhE,UAAU;IAEf,kFAAkF;eAK7E,UAAU;CAChB,CAAC;AAEF,MAAM,MAAM,gBAAgB,GAAG,MAAM,OAAO,aAAa,CAAC"}

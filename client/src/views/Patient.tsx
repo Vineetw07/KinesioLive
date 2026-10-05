@@ -77,6 +77,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   const [sessionData, setSessionData] = useState<SessionResponse | null>(null);
   const [callStatus, setCallStatus] = useState<'idle' | 'authenticating' | 'connecting' | 'connected' | 'ended' | 'error'>('idle');
   const [initError, setInitError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState<number>(0);
 
   // Local HUD State (Optimistic)
   const [kneeAngleL, setKneeAngleL] = useState<number>(180);
@@ -92,9 +93,80 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   // Coaching Toast State
   const [activeToast, setActiveToast] = useState<{ id: number; text: string } | null>(null);
 
+  const [isLocalCameraFallback, setIsLocalCameraFallback] = useState<boolean>(false);
+
   // DOM Refs
   const callContainerRef = useRef<HTMLDivElement>(null);
+  const fallbackVideoRef = useRef<HTMLVideoElement>(null);
+  const fallbackStreamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const activeVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Dynamic Canvas Bounds: Managed via React state so re-renders cannot clobber video alignment
+  const [canvasBounds, setCanvasBounds] = useState<{
+    left: string | number;
+    top: string | number;
+    width: string | number;
+    height: string | number;
+    objectFit: 'cover' | 'contain' | 'fill';
+  }>({
+    left: 0,
+    top: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  });
+
+  // Standalone Camera Fallback Functions
+  const startFallbackCamera = async () => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        setInitError('getUserMedia is not supported in this browser environment.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false,
+      });
+      fallbackStreamRef.current = stream;
+      setIsLocalCameraFallback(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Camera access error';
+      setInitError(`Camera access denied: ${msg}`);
+    }
+  };
+
+  const stopFallbackCamera = () => {
+    if (fallbackStreamRef.current) {
+      fallbackStreamRef.current.getTracks().forEach((track) => track.stop());
+      fallbackStreamRef.current = null;
+    }
+    if (fallbackVideoRef.current) {
+      fallbackVideoRef.current.srcObject = null;
+    }
+    if (stopPosePipelineRef.current) {
+      stopPosePipelineRef.current();
+      stopPosePipelineRef.current = null;
+    }
+    setIsLocalCameraFallback(false);
+  };
+
+  const toggleLocalCameraFallback = () => {
+    if (isLocalCameraFallback) {
+      stopFallbackCamera();
+    } else {
+      startFallbackCamera();
+    }
+  };
+
+  useEffect(() => {
+    if (isLocalCameraFallback && fallbackVideoRef.current && fallbackStreamRef.current) {
+      fallbackVideoRef.current.srcObject = fallbackStreamRef.current;
+      fallbackVideoRef.current.play().catch((playErr: unknown) => {
+        console.warn('Fallback video autoplay notice:', playErr);
+      });
+    }
+  }, [isLocalCameraFallback]);
 
   // Lifecycle Refs
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
@@ -106,12 +178,59 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   const baselineRef = useRef<StandingBaseline | null>(null);
   const telemetrySeqRef = useRef<number>(1);
   const repBadgeKeyRef = useRef<number>(0);
+  const lastSyncTimeRef = useRef<number>(0);
 
   // In-Memory Outbox Queue Refs (D5.1)
   const outboxQueueRef = useRef<OutboxItem[]>([]);
   const isFlushingRef = useRef<boolean>(false);
 
   const activeSessionId = sessionData?.sessionId || propSessionId || '';
+
+  // Dynamic Canvas Alignment: Ensures the skeleton canvas overlays 1:1 onto the active video
+  const syncCanvasToVideo = (videoEl: HTMLVideoElement | null) => {
+    if (!videoEl) return;
+
+    if (isLocalCameraFallback) {
+      setCanvasBounds((prev) => {
+        if (
+          prev.left === 0 &&
+          prev.top === 0 &&
+          prev.width === '100%' &&
+          prev.height === '100%' &&
+          prev.objectFit === 'cover'
+        ) {
+          return prev;
+        }
+        return { left: 0, top: 0, width: '100%', height: '100%', objectFit: 'cover' };
+      });
+      return;
+    }
+
+    if (callContainerRef.current) {
+      const vRect = videoEl.getBoundingClientRect();
+      const cRect = callContainerRef.current.getBoundingClientRect();
+      if (vRect.width > 0 && vRect.height > 0 && cRect.width > 0) {
+        const left = Math.round(vRect.left - cRect.left);
+        const top = Math.round(vRect.top - cRect.top);
+        const width = Math.round(vRect.width);
+        const height = Math.round(vRect.height);
+        const computedFit = (window.getComputedStyle(videoEl).objectFit as 'cover' | 'contain' | 'fill') || 'cover';
+
+        setCanvasBounds((prev) => {
+          if (
+            prev.left === left &&
+            prev.top === top &&
+            prev.width === width &&
+            prev.height === height &&
+            prev.objectFit === computedFit
+          ) {
+            return prev;
+          }
+          return { left, top, width, height, objectFit: computedFit };
+        });
+      }
+    }
+  };
 
   // In-Memory Outbox Queue Flush (D5.1)
   const flushOutboxQueue = async () => {
@@ -157,6 +276,12 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         const session = await requestSession('patient', propSessionId);
         if (isCancelled) return;
         setSessionData(session);
+
+        if (session.authToken.startsWith('mock_token_')) {
+          throw new Error(
+            'CometChat Auth Key is truncated in .env (ends with "..."). Please update .env with your full 40-character key from app.cometchat.com'
+          );
+        }
 
         // Initialize Chat SDK
         const chatSettings = new CometChat.AppSettingsBuilder()
@@ -280,7 +405,11 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       } catch (err: unknown) {
         if (!isCancelled) {
           setCallStatus('error');
-          setInitError(err instanceof Error ? err.message : 'Failed to connect Patient session');
+          const errMsg =
+            (err as any)?.message ||
+            (err as any)?.error?.message ||
+            (typeof err === 'string' ? err : 'Failed to connect Patient session');
+          setInitError(errMsg);
         }
       }
     }
@@ -293,13 +422,42 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         callTeardownRef.current();
         callTeardownRef.current = null;
       }
+      if (fallbackStreamRef.current) {
+        fallbackStreamRef.current.getTracks().forEach((track) => track.stop());
+        fallbackStreamRef.current = null;
+      }
     };
-  }, [propSessionId]);
+  }, [propSessionId, retryKey]);
 
   // 2. Initialize MediaPipe PoseLandmarker and Tap Video Element
   useEffect(() => {
     let isPipelineActive = true;
     let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    const handleResize = () => {
+      let activeVideo = activeVideoRef.current;
+      if (!activeVideo || !document.contains(activeVideo)) {
+        if (isLocalCameraFallback && fallbackVideoRef.current) {
+          activeVideo = fallbackVideoRef.current;
+        } else if (callContainerRef.current) {
+          const videos = Array.from(callContainerRef.current.querySelectorAll('video'));
+          activeVideo = videos.find((v) => v.muted) || videos[0] || null;
+        }
+        activeVideoRef.current = activeVideo;
+      }
+      if (activeVideo) {
+        syncCanvasToVideo(activeVideo);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    if (typeof ResizeObserver !== 'undefined' && callContainerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      resizeObserver.observe(callContainerRef.current);
+    }
 
     async function setupVisionPipeline() {
       try {
@@ -319,10 +477,15 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         });
 
         // Zero-Contention Camera Ingestion:
-        // Poll container for rendered <video> element
+        // Poll container for rendered <video> element (or fallback camera if active)
         const checkForVideoElement = () => {
-          if (!callContainerRef.current) return;
-          const videoEl = callContainerRef.current.querySelector('video');
+          let videoEl: HTMLVideoElement | null = null;
+          if (isLocalCameraFallback && fallbackVideoRef.current) {
+            videoEl = fallbackVideoRef.current;
+          } else if (callContainerRef.current) {
+            const videos = Array.from(callContainerRef.current.querySelectorAll('video'));
+            videoEl = videos.find((v) => v.muted) || videos[0] || null;
+          }
 
           if (
             videoEl &&
@@ -335,12 +498,15 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
               pollIntervalId = null;
             }
 
+            activeVideoRef.current = videoEl;
+            syncCanvasToVideo(videoEl);
+
             // Start frame ingestion pipeline tapping video directly via rVFC
             const stopPipeline = startVideoPosePipeline(
               videoEl,
               initResult.landmarker,
               (result: PoseLandmarkerResult, latencyMs: number) => {
-                handlePoseFrame(result, latencyMs, videoEl);
+                handlePoseFrame(result, latencyMs, videoEl!);
               }
             );
 
@@ -358,6 +524,10 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
 
     return () => {
       isPipelineActive = false;
+      window.removeEventListener('resize', handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       if (pollIntervalId) {
         clearInterval(pollIntervalId);
       }
@@ -374,7 +544,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         landmarkerRef.current = null;
       }
     };
-  }, [activeSessionId]);
+  }, [activeSessionId, isLocalCameraFallback]);
 
   // 3. Process Each Inferred Frame & Canvas Rendering
   const handlePoseFrame = (
@@ -396,6 +566,15 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     const width = videoEl.videoWidth || 640;
     const height = videoEl.videoHeight || 480;
 
+    activeVideoRef.current = videoEl;
+
+    // Periodic sync check to ensure canvas matches video element dimensions across layout changes
+    const now = performance.now();
+    if (now - lastSyncTimeRef.current > 1000) {
+      lastSyncTimeRef.current = now;
+      syncCanvasToVideo(videoEl);
+    }
+
     // Automatic Baseline Calibration on First Valid Standing Frame
     if (!baselineRef.current) {
       const calibrated = calibrateStandingBaseline(landmarks2D, width, height);
@@ -411,12 +590,15 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     const angleL = compute3DKneeFlexion(worldLandmarks3D[23], worldLandmarks3D[25], worldLandmarks3D[27]);
     const angleR = compute3DKneeFlexion(worldLandmarks3D[24], worldLandmarks3D[26], worldLandmarks3D[28]);
 
-    const devL = currentBaseline
+    // Unmirrored camera polarity enforcement:
+    // Left Leg (landmarks 23, 25, 27): Medial collapse decreases X -> polarity = -1
+    // Right Leg (landmarks 24, 26, 28): Medial collapse increases X -> polarity = +1
+    const rawDevL = currentBaseline
       ? computeValgusDeviation(landmarks2D[23], landmarks2D[25], landmarks2D[27], currentBaseline, 'L')
-      : 0;
-    const devR = currentBaseline
+      : null;
+    const rawDevR = currentBaseline
       ? computeValgusDeviation(landmarks2D[24], landmarks2D[26], landmarks2D[28], currentBaseline, 'R')
-      : 0;
+      : null;
 
     const depth = currentBaseline
       ? computeDepthRatio(landmarks2D[23].y * height, currentBaseline)
@@ -432,7 +614,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       fsmOutput = repCounterRef.current.update({
         timestamp: Date.now(),
         kneeAngle: { L: angleL, R: angleR },
-        valgusDevPct: { L: devL, R: devR },
+        valgusDevPct: { L: rawDevL, R: rawDevR },
         depthRatio: depth,
         visibility: avgVis,
         sessionId: activeSessionId,
@@ -444,29 +626,29 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       if (angleR !== null) setKneeAngleR(Math.round(angleR));
       setDepthProgress(Math.round(Math.max(0, depth) * 100));
       setPhase(fsmOutput.phase);
-      setValgusL(devL !== null ? Math.round(devL * 10) / 10 : 0);
-      setValgusR(devR !== null ? Math.round(devR * 10) / 10 : 0);
+      setValgusL(rawDevL !== null ? Math.round(rawDevL * 10) / 10 : 0);
+      setValgusR(rawDevR !== null ? Math.round(rawDevR * 10) / 10 : 0);
 
       if (fsmOutput.reps > repCount) {
         setRepCount(fsmOutput.reps);
         repBadgeKeyRef.current += 1;
       }
 
-      // Dispatch Persisted Rep Message on rep completion
-      if (fsmOutput.completedRep) {
+      // Dispatch Persisted Rep Message on rep completion (only if call active)
+      if (fsmOutput.completedRep && callStatus === 'connected') {
         dispatchCustomRepMessage(fsmOutput.completedRep);
       }
 
-      // Dispatch Persisted Valgus Alerts
-      if (fsmOutput.alerts && fsmOutput.alerts.length > 0) {
+      // Dispatch Persisted Valgus Alerts (only if call active)
+      if (fsmOutput.alerts && fsmOutput.alerts.length > 0 && callStatus === 'connected') {
         for (const alert of fsmOutput.alerts) {
           dispatchCustomAlertMessage(alert);
         }
       }
     }
 
-    // 10 Hz Transient Messaging (Token Bucket Capped)
-    if (tokenBucketRef.current.tryConsume() && activeSessionId) {
+    // 10 Hz Transient Messaging (Token Bucket Capped) - only when connected
+    if (tokenBucketRef.current.tryConsume() && activeSessionId && callStatus === 'connected') {
       const posePayload: KinePosePayload = {
         v: SCHEMA_VERSION,
         sid: activeSessionId,
@@ -476,7 +658,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         fps: instantFps || 30,
         phase: fsmOutput ? fsmOutput.phase : 'standing',
         kneeFlexionDeg: { L: angleL, R: angleR },
-        valgusDevPct: { L: devL, R: devR },
+        valgusDevPct: { L: rawDevL, R: rawDevR },
         depthRatio: depth,
         vis: avgVis,
         reps: fsmOutput ? fsmOutput.reps : repCount,
@@ -495,7 +677,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     }
 
     // Render Dynamic 2D Canvas Skeleton Overlay
-    renderCanvasOverlay(landmarks2D, width, height, devL, devR);
+    renderCanvasOverlay(landmarks2D, width, height, rawDevL, rawDevR);
   };
 
   // Dispatch Persisted Custom Messages (with Outbox Retry Queue)
@@ -624,7 +806,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         flexDirection: 'column',
         gap: 'var(--space-6)',
         width: '100%',
-        height: '100%',
+        minHeight: '100%',
         color: 'var(--text-primary)',
         position: 'relative',
       }}
@@ -720,6 +902,29 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
 
         {/* Header Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          {(callStatus === 'error' || callStatus === 'authenticating' || isLocalCameraFallback) && (
+            <button
+              type="button"
+              onClick={toggleLocalCameraFallback}
+              style={{
+                padding: 'var(--space-2) var(--space-4)',
+                borderRadius: 'var(--radius-pill)',
+                border: isLocalCameraFallback
+                  ? '1px solid var(--accent-lime)'
+                  : '1px solid var(--surface-border-strong)',
+                backgroundColor: isLocalCameraFallback
+                  ? 'rgba(218, 254, 82, 0.15)'
+                  : 'var(--surface-canvas-subtle)',
+                color: isLocalCameraFallback ? 'var(--accent-lime)' : 'var(--text-primary)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {isLocalCameraFallback ? '📷 Stop Offline Camera' : '📷 Test Squats Offline'}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleRecalibrate}
@@ -758,167 +963,252 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         </div>
       </div>
 
-      {/* Main Grid: Video Stream with 1:1 Canvas Overlay & Optimistic HUD */}
+      {/* 1. Substantially Enlarged Camera Window Container (Full Width) */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.4fr) minmax(300px, 1fr)',
-          gap: 'var(--space-6)',
-          alignItems: 'stretch',
-          minHeight: '480px',
+          position: 'relative',
+          width: '100%',
+          height: 'clamp(580px, 60vh, 640px)',
+          minHeight: '580px',
+          borderRadius: 'var(--radius-bento-card)',
+          overflow: 'hidden',
+          backgroundColor: 'var(--surface-dark-card)',
+          border: '1px solid var(--surface-dark-card-border)',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: 'var(--shadow-bento)',
+          flexShrink: 0,
         }}
       >
-        {/* Left Column: Video & Skeleton Canvas Container */}
-        <div
-          style={{
-            position: 'relative',
-            borderRadius: 'var(--radius-bento-card)',
-            overflow: 'hidden',
-            backgroundColor: 'var(--surface-dark-card)',
-            border: '1px solid var(--surface-dark-card-border)',
-            minHeight: '440px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {/* Status Overlay */}
-          {callStatus !== 'connected' && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                zIndex: 10,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'rgba(24, 25, 28, 0.92)',
-                color: 'var(--text-on-dark-primary)',
-                padding: 'var(--space-6)',
-                textAlign: 'center',
-                gap: 'var(--space-3)',
-              }}
-            >
-              {callStatus === 'connecting' || callStatus === 'authenticating' ? (
-                <>
-                  <div
-                    style={{
-                      width: '2.5rem',
-                      height: '2.5rem',
-                      borderRadius: '50%',
-                      border: '3px solid var(--surface-dark-card-border)',
-                      borderTopColor: 'var(--accent-lime)',
-                      animation: 'spin 1s linear infinite',
-                    }}
-                  />
-                  <p style={{ fontWeight: 600 }}>Connecting Calls v5 & Pose Engine...</p>
-                </>
-              ) : callStatus === 'error' ? (
-                <>
-                  <span style={{ fontSize: '2rem' }}>⚠️</span>
-                  <p style={{ fontWeight: 600, color: 'var(--status-critical)' }}>
-                    Session Connection Error
-                  </p>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
-                    {initError || 'Failed to start video pose pipeline.'}
-                  </p>
-                </>
-              ) : null}
-            </div>
-          )}
-
-          {/* Calls v5 Mount Element */}
+        {/* Status Overlay */}
+        {callStatus !== 'connected' && !isLocalCameraFallback && (
           <div
-            ref={callContainerRef}
-            style={{
-              width: '100%',
-              height: '100%',
-              minHeight: '440px',
-              flex: 1,
-            }}
-          />
-
-          {/* 2D Canvas Skeleton Overlay (Aligned 1:1 on top of video) */}
-          <canvas
-            ref={canvasRef}
             style={{
               position: 'absolute',
               inset: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 5,
-            }}
-          />
-
-          {/* Calibrated Status Badge */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 'var(--space-3)',
-              left: 'var(--space-3)',
-              zIndex: 6,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
-              padding: 'var(--space-1) var(--space-3)',
-              borderRadius: 'var(--radius-pill)',
-              backgroundColor: 'rgba(19, 20, 23, 0.75)',
-              backdropFilter: 'blur(4px)',
-              fontSize: '0.75rem',
-              color: 'var(--text-on-dark-primary)',
-            }}
-          >
-            <span
-              style={{
-                width: '0.5rem',
-                height: '0.5rem',
-                borderRadius: '50%',
-                backgroundColor: isCalibrated ? 'var(--status-stable)' : 'var(--status-warning)',
-              }}
-            />
-            <span>{isCalibrated ? 'Baseline Calibrated' : 'Stand upright to calibrate'}</span>
-          </div>
-        </div>
-
-        {/* Right Column: Optimistic Local HUD */}
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--space-4)',
-          }}
-        >
-          {/* Card: Rep Counter Badge with Framer Motion Spring Pop */}
-          <div
-            style={{
-              backgroundColor: 'var(--surface-dark-sidebar)',
-              borderRadius: 'var(--radius-bento-card)',
-              padding: 'var(--space-5)',
-              color: 'var(--text-on-dark-primary)',
+              zIndex: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: 'var(--space-2)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'rgba(24, 25, 28, 0.92)',
+              color: 'var(--text-on-dark-primary)',
+              padding: 'var(--space-6)',
+              textAlign: 'center',
+              gap: 'var(--space-3)',
             }}
           >
-            <span
-              style={{
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                color: 'var(--text-on-dark-secondary)',
-              }}
-            >
-              Completed Squat Reps
-            </span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)' }}>
+            {callStatus === 'connecting' || callStatus === 'authenticating' ? (
+              <>
+                <div
+                  style={{
+                    width: '2.5rem',
+                    height: '2.5rem',
+                    borderRadius: '50%',
+                    border: '3px solid var(--surface-dark-card-border)',
+                    borderTopColor: 'var(--accent-lime)',
+                    animation: 'spin 1s linear infinite',
+                  }}
+                />
+                <p style={{ fontWeight: 600 }}>Connecting Calls v5 & Pose Engine...</p>
+                <button
+                  type="button"
+                  onClick={toggleLocalCameraFallback}
+                  style={{
+                    marginTop: 'var(--space-2)',
+                    padding: 'var(--space-2) var(--space-4)',
+                    borderRadius: 'var(--radius-pill)',
+                    border: '1px solid var(--accent-lime)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--accent-lime)',
+                    fontWeight: 700,
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📷 Start Offline Camera Fallback
+                </button>
+              </>
+            ) : callStatus === 'error' ? (
+              <>
+                <span style={{ fontSize: '2rem' }}>⚠️</span>
+                <p style={{ fontWeight: 600, color: 'var(--status-critical)' }}>
+                  Session Connection Error
+                </p>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
+                  {initError || 'Failed to start video pose pipeline.'}
+                </p>
+                <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+                  <button
+                    type="button"
+                    onClick={() => setRetryKey((k) => k + 1)}
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      borderRadius: 'var(--radius-pill)',
+                      border: 'none',
+                      backgroundColor: 'var(--accent-lime)',
+                      color: 'var(--surface-dark-sidebar)',
+                      fontWeight: 700,
+                      fontSize: '0.8125rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    🔄 Retry Connection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleLocalCameraFallback}
+                    style={{
+                      padding: 'var(--space-2) var(--space-4)',
+                      borderRadius: 'var(--radius-pill)',
+                      border: '1px solid var(--surface-border-strong)',
+                      backgroundColor: 'var(--surface-canvas-subtle)',
+                      color: 'var(--text-primary)',
+                      fontWeight: 600,
+                      fontSize: '0.8125rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    📷 Test Squats Offline
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        )}
+
+        {/* Calls v5 Mount Element */}
+        <div
+          ref={callContainerRef}
+          style={{
+            width: '100%',
+            height: '100%',
+            minHeight: '580px',
+            flex: 1,
+            display: isLocalCameraFallback ? 'none' : 'block',
+          }}
+        />
+
+        {/* Fallback Standalone Local Video Element */}
+        {isLocalCameraFallback && (
+          <video
+            ref={fallbackVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              width: '100%',
+              height: '100%',
+              minHeight: '580px',
+              objectFit: 'cover',
+              flex: 1,
+            }}
+          />
+        )}
+
+        {/* 2D Canvas Skeleton Overlay (Aligned 1:1 on top of video) */}
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: 'absolute',
+            left: canvasBounds.left,
+            top: canvasBounds.top,
+            width: canvasBounds.width,
+            height: canvasBounds.height,
+            objectFit: canvasBounds.objectFit,
+            pointerEvents: 'none',
+            zIndex: 5,
+          }}
+        />
+
+        {/* Calibrated Status Badge */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 'var(--space-4)',
+            left: 'var(--space-4)',
+            zIndex: 6,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            padding: 'var(--space-1) var(--space-3)',
+            borderRadius: 'var(--radius-pill)',
+            backgroundColor: 'rgba(19, 20, 23, 0.75)',
+            backdropFilter: 'blur(4px)',
+            fontSize: '0.75rem',
+            color: 'var(--text-on-dark-primary)',
+          }}
+        >
+          <span
+            style={{
+              width: '0.5rem',
+              height: '0.5rem',
+              borderRadius: '50%',
+              backgroundColor: isCalibrated ? 'var(--status-stable)' : 'var(--status-warning)',
+            }}
+          />
+          <span>{isLocalCameraFallback ? 'Offline Camera Active • ' : ''}{isCalibrated ? 'Baseline Calibrated' : 'Stand upright to calibrate'}</span>
+        </div>
+      </div>
+
+      {/* 2. Optimistic Local HUD & Kinematics Bento Row (Placed Below Camera Window) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+          gap: 'var(--space-6)',
+          width: '100%',
+          alignItems: 'stretch',
+        }}
+      >
+        {/* Bento Card 1: Completed Squat Reps */}
+        <div
+          style={{
+            backgroundColor: 'var(--surface-dark-sidebar)',
+            borderRadius: 'var(--radius-bento-card)',
+            padding: 'var(--space-6)',
+            color: 'var(--text-on-dark-primary)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 'var(--space-4)',
+            boxShadow: 'var(--shadow-bento)',
+            border: '1px solid var(--surface-dark-card-border)',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  color: 'var(--text-on-dark-secondary)',
+                }}
+              >
+                Completed Squat Reps
+              </span>
+              <span
+                style={{
+                  fontSize: '0.6875rem',
+                  fontWeight: 600,
+                  padding: 'var(--space-0-5) var(--space-2)',
+                  borderRadius: 'var(--radius-pill)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-on-dark-secondary)',
+                }}
+              >
+                Auto-Validated
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
               <motion.span
                 key={repCount}
                 animate={{ scale: [1.35, 1] }}
                 transition={springPresets.snappy}
                 style={{
-                  fontSize: '3.5rem',
+                  fontSize: '3.75rem',
                   fontWeight: 900,
                   letterSpacing: '-0.03em',
                   color: 'var(--accent-lime)',
@@ -927,50 +1217,67 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
               >
                 {repCount}
               </motion.span>
-              <span style={{ fontSize: '0.9375rem', color: 'var(--text-on-dark-muted)' }}>
+              <span style={{ fontSize: '1rem', color: 'var(--text-on-dark-muted)', fontWeight: 500 }}>
                 validated reps
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  padding: 'var(--space-0-5) var(--space-2)',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor: 'rgba(218, 254, 82, 0.2)',
-                  color: 'var(--accent-lime)',
-                  fontWeight: 600,
-                }}
-              >
-                Phase: {phase}
-              </span>
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  padding: 'var(--space-0-5) var(--space-2)',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  color: 'var(--text-on-dark-secondary)',
-                  fontWeight: 600,
-                }}
-              >
-                {currentFps} FPS
               </span>
             </div>
           </div>
 
-          {/* Card: Joint Angles & Depth Ratio */}
-          <div
-            style={{
-              backgroundColor: 'var(--surface-canvas-subtle)',
-              border: '1px solid var(--surface-border-subtle)',
-              borderRadius: 'var(--radius-bento-card)',
-              padding: 'var(--space-5)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-4)',
-            }}
-          >
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor: 'rgba(218, 254, 82, 0.18)',
+                color: 'var(--accent-lime)',
+                fontWeight: 600,
+              }}
+            >
+              Phase: {phase}
+            </span>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                color: 'var(--text-on-dark-secondary)',
+                fontWeight: 600,
+              }}
+            >
+              ⚡ {currentFps} FPS
+            </span>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                padding: 'var(--space-1) var(--space-3)',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor: isCalibrated ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                color: isCalibrated ? 'var(--status-stable)' : 'var(--status-warning)',
+                fontWeight: 600,
+              }}
+            >
+              {isCalibrated ? '● Baseline Calibrated' : '⏳ Stand upright to calibrate'}
+            </span>
+          </div>
+        </div>
+
+        {/* Bento Card 2: Joint Angles & Depth Ratio */}
+        <div
+          style={{
+            backgroundColor: 'var(--surface-canvas-subtle)',
+            border: '1px solid var(--surface-border-subtle)',
+            borderRadius: 'var(--radius-bento-card)',
+            padding: 'var(--space-6)',
+            boxShadow: 'var(--shadow-bento)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 'var(--space-4)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span
               style={{
                 fontSize: '0.75rem',
@@ -982,70 +1289,76 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
             >
               Real-Time Joint Kinematics
             </span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+              Threshold: ≤ 8.0% Valgus
+            </span>
+          </div>
 
-            {/* Bilateral Knee Angles */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-              <div
-                style={{
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius-control)',
-                  backgroundColor: 'var(--surface-canvas)',
-                  border: '1px solid var(--surface-border-subtle)',
-                }}
-              >
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Left Knee
-                </span>
-                <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {kneeAngleL}°
-                </span>
-                <div style={{ fontSize: '0.6875rem', marginTop: 'var(--space-1)' }}>
-                  Valgus: <strong style={{ color: valgusL > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{valgusL}%</strong>
-                </div>
-              </div>
-
-              <div
-                style={{
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius-control)',
-                  backgroundColor: 'var(--surface-canvas)',
-                  border: '1px solid var(--surface-border-subtle)',
-                }}
-              >
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Right Knee
-                </span>
-                <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {kneeAngleR}°
-                </span>
-                <div style={{ fontSize: '0.6875rem', marginTop: 'var(--space-1)' }}>
-                  Valgus: <strong style={{ color: valgusR > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{valgusR}%</strong>
-                </div>
+          {/* Bilateral Knee Angles */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+            <div
+              style={{
+                padding: 'var(--space-3) var(--space-4)',
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--surface-canvas)',
+                border: '1px solid var(--surface-border-subtle)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Left Knee
+              </span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                {kneeAngleL}°
+              </span>
+              <div style={{ fontSize: '0.6875rem', marginTop: 'var(--space-1)' }}>
+                Valgus: <strong style={{ color: valgusL > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{valgusL}%</strong>
               </div>
             </div>
 
-            {/* Pelvic Depth Progress */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Squat Depth</span>
-                <span style={{ fontWeight: 600 }}>{depthProgress}%</span>
+            <div
+              style={{
+                padding: 'var(--space-3) var(--space-4)',
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--surface-canvas)',
+                border: '1px solid var(--surface-border-subtle)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Right Knee
+              </span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                {kneeAngleR}°
+              </span>
+              <div style={{ fontSize: '0.6875rem', marginTop: 'var(--space-1)' }}>
+                Valgus: <strong style={{ color: valgusR > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{valgusR}%</strong>
               </div>
-              <div
+            </div>
+          </div>
+
+          {/* Pelvic Depth Progress */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Squat Depth Target (≥85%)</span>
+              <span style={{ fontWeight: 700, color: depthProgress >= 85 ? 'var(--status-stable)' : 'var(--text-primary)' }}>
+                {depthProgress}%
+              </span>
+            </div>
+            <div
+              style={{
+                height: '0.625rem',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor: 'var(--surface-border-strong)',
+                overflow: 'hidden',
+              }}
+            >
+              <motion.div
                 style={{
-                  height: '0.5rem',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor: 'var(--surface-border-strong)',
-                  overflow: 'hidden',
+                  height: '100%',
+                  backgroundColor: depthProgress >= 85 ? 'var(--status-stable)' : 'var(--accent-lime)',
+                  width: `${Math.min(100, depthProgress)}%`,
+                  transition: 'background-color 0.2s ease',
                 }}
-              >
-                <motion.div
-                  style={{
-                    height: '100%',
-                    backgroundColor: depthProgress >= 85 ? 'var(--status-stable)' : 'var(--accent-lime)',
-                    width: `${Math.min(100, depthProgress)}%`,
-                  }}
-                />
-              </div>
+              />
             </div>
           </div>
         </div>

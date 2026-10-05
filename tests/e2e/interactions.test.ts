@@ -7,10 +7,13 @@ import {
   type SessionResponse,
   type Envelope
 } from '../../shared/src/index.js';
+import path from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   dispatchHealthRequest,
   dispatchSessionRequest,
-  validateBootCredentials
+  validateBootCredentials,
+  CLIENT_DIR
 } from './helpers/specHarness.js';
 
 describe('Tier 3: Cross-Feature Interaction Test Suite', () => {
@@ -172,5 +175,54 @@ describe('Tier 3: Cross-Feature Interaction Test Suite', () => {
     expect(sessionMarker.clinicianUid).toBe('dr-demo');
     expect(sessionMarker.patientUid).toBe('pt-demo');
     expect(sessionMarker.action).toBe('start');
+  });
+
+  // =========================================================================
+  // INTERACTION 7: App Shell Session Input Keystroke Thrashing Elimination
+  // =========================================================================
+
+  it('T3-INT.7: App.tsx decouples sessionIdInput from active sessionId to eliminate WebRTC call thrashing on typing', () => {
+    const appPath = path.join(CLIENT_DIR, 'src', 'App.tsx');
+    expect(existsSync(appPath)).toBe(true);
+    const appContent = readFileSync(appPath, 'utf8');
+
+    // Ensure onChange only updates input state and does NOT directly invoke setSessionId
+    const inputMatch = appContent.match(/id="session-id-input"[\s\S]*?\/>/);
+    expect(inputMatch).not.toBeNull();
+    const inputBlock = inputMatch![0];
+
+    expect(inputBlock).toContain('setSessionIdInput(e.target.value)');
+    expect(inputBlock).not.toContain('setSessionId(e.target.value');
+    expect(inputBlock).toContain("e.key === 'Enter'");
+  });
+
+  // =========================================================================
+  // INTERACTION 8: Patient Standalone Camera Fallback & Polarity Invariants
+  // =========================================================================
+
+  it('T3-INT.8: Patient.tsx implements standalone camera fallback and unmirrored valgus polarity', () => {
+    const patientPath = path.join(CLIENT_DIR, 'src', 'views', 'Patient.tsx');
+    expect(existsSync(patientPath)).toBe(true);
+    const patientContent = readFileSync(patientPath, 'utf8');
+
+    expect(patientContent).toContain('isLocalCameraFallback');
+    expect(patientContent).toContain('startFallbackCamera');
+    expect(patientContent).toContain('getUserMedia');
+    expect(patientContent).toContain("computeValgusDeviation(landmarks2D[23], landmarks2D[25], landmarks2D[27], currentBaseline, 'L')");
+    expect(patientContent).toContain("computeValgusDeviation(landmarks2D[24], landmarks2D[26], landmarks2D[28], currentBaseline, 'R')");
+  });
+
+  // =========================================================================
+  // INTERACTION 9: Clinician Acoustic Guard & Moderator Mute Action
+  // =========================================================================
+
+  it('T3-INT.9: Clinician.tsx enforces startAudioMuted: true and provides Mute Patient moderator control', () => {
+    const clinicianPath = path.join(CLIENT_DIR, 'src', 'views', 'Clinician.tsx');
+    expect(existsSync(clinicianPath)).toBe(true);
+    const clinicianContent = readFileSync(clinicianPath, 'utf8');
+
+    expect(clinicianContent).toContain('startAudioMuted: true');
+    expect(clinicianContent).toContain('muteParticipant');
+    expect(clinicianContent).toContain('Mute Patient');
   });
 });

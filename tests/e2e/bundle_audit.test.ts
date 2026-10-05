@@ -1,10 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { scanDirectoryForSecrets, PROJECT_ROOT, CLIENT_DIR } from './helpers/specHarness.js';
 
 const distAssetsPath = path.join(CLIENT_DIR, 'dist', 'assets');
 const distExists = existsSync(distAssetsPath);
+
+describe('Bundle Configuration & Build Pipeline Audit', () => {
+  it('client/package.json declares build script strictly as "vite build" to prevent tsc -b artifact pollution in client/src', () => {
+    const pkgPath = path.join(CLIENT_DIR, 'package.json');
+    expect(existsSync(pkgPath)).toBe(true);
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    expect(pkg.scripts?.build).toBe('vite build');
+  });
+
+  it('client/dist/assets exists and contains compiled production JS modules for audit', () => {
+    expect(existsSync(distAssetsPath)).toBe(true);
+    const jsFiles = readdirSync(distAssetsPath).filter(f => f.endsWith('.js'));
+    expect(jsFiles.length).toBeGreaterThan(0);
+  });
+});
 
 describe.skipIf(!distExists)('Bundle Secret Audit — client/dist/assets/*.js', () => {
   it('bundle contains no literal COMETCHAT_AUTH_KEY variable name', () => {

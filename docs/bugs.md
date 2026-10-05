@@ -6,12 +6,37 @@
 
 ---
 
+## 🤖 Agent Append Protocol (Read Before Logging)
+
+This is a **live document**. Whenever a defect, test failure, or unexpected behavior is found — during development, audits, or QA sessions — append a new row to the incident table **immediately** when discovered. Do not batch findings.
+
+**Rules for appending:**
+- Next available Bug ID: determine by reading the last row and incrementing (current last: **BUG-008**).
+- Severity: `Critical` | `High` | `Medium` | `Low`
+- Status: `ACTIVE` on creation. Change to `RESOLVED` only after a test with exit code 0 confirms the fix.
+- Never overwrite or delete existing rows.
+- Production code changes require a corresponding failing test written before the patch.
+- If the bug was found during a QA audit, reference the check ID (e.g. `M2-B`) in the Resolution column.
+
+**Row format to append immediately below the last existing row:**
+```
+| **BUG-00N** | <Severity> | <Component> | <Issue — one sentence> | <RCA — root cause origin> | <Minimal fix description + test path> | **ACTIVE** |
+```
+
+---
+
 ## 📋 Active & Resolved Incident Log
 
 | Bug ID | Severity | Component | Issue Description | Root Cause Analysis (RCA) | Resolution / Verification | Status |
 |---|---|---|---|---|---|---|
 | **BUG-001** | High | MediaPipe / Geometry | 2D frontal knee angle $(hip-knee-ankle)$ produces numerical instability and rapid flips at deep squat depth. | In a frontal view, as the hip descends toward knee level $(y_{\text{hip}} \to y_{\text{knee}})$, the vertical femoral segment $|y_{\text{knee}} - y_{\text{hip}}|$ approaches zero. Small horizontal shifts turn the vector purely horizontal, causing erratic angular jumps ($180^\circ \to 90^\circ$ or $0^\circ$) or near-zero division. | Separated sagittal depth calculation from frontal valgus calculation. Valgus measured strictly as medial horizontal deviation $(\Delta x)$ relative to the hip-ankle vector in 2D normalized by standing baseline leg length. Depth calculated via 3D `worldLandmarks` + calibrated hip drop ratio. Verified in `geometry.test.ts` and `repCounter.test.ts`. | **RESOLVED** (21 tests green) |
 | **BUG-002** | High | CometChat Calls / Auth | Call join fails with `ERROR_AUTH_TOKEN_MISSING` if `generateToken()` runs before user session is active. | `CometChatCalls.loginWithAuthToken()` is asynchronous and must be fully awaited before `generateToken()` can access the active user session. | Enforced strict async pipeline in `callsRunner.ts`: `init` -> `loginWithAuthToken` -> await `isUserLoggedIn` -> `generateToken` -> `joinSession`. Verified in `tests/e2e/spike_s3_s4_stress.test.ts`. | **RESOLVED** (20 tests green) |
+| **BUG-003** | High | CometChat Auth / UI | Browser shows "Session Connection Error / Failed to connect Patient session" and "Connection Interrupted / Failed to connect Clinician call session". | `COMETCHAT_AUTH_KEY` in `.env` had a trailing ellipsis `...`. Backend fell back to dummy `mock_token_` string, which CometChat rejected with 401 `AUTH_ERR_AUTH_TOKEN_NOT_FOUND`. Frontend catch block `err instanceof Error ? err.message : ...` masked the CometChat error object. Additionally, duplicate `.js` files from `tsc -b` polluted `client/src`. | Removed duplicate build artifacts from `client/src`, disabled `composite: true` in `client/tsconfig.json`, simplified `client/package.json` build command to `vite build`, added explicit mock token validation, and unmasked CometChat error messages in `Patient.tsx` and `Clinician.tsx`. | **RESOLVED** |
+| **BUG-004** | High | App Shell / WebRTC Lifecycle | Keystroke thrashing: typing in `#session-id-input` unmounted and remounted active WebRTC call in `Patient.tsx` and `Clinician.tsx`. | `setSessionId(e.target.value.trim())` was called on every `onChange` event, continuously changing the `sessionId` prop passed to call views and re-triggering their bootstrap effects. | Decoupled `sessionIdInput` from active `sessionId`. Only committed `sessionId` on Enter keypress (`onKeyDown`) or clicking "Connect Token API". Typing in input no longer triggers call teardown. | **RESOLVED** |
+| **BUG-005** | Medium | MediaPipe / Patient Video Pipeline | MediaPipe pose detection stayed stuck waiting for a `<video>` element when CometChat credentials were missing or call was connecting/in error. | Pose detection pipeline strictly tapped `<video>` elements rendered by Calls SDK v5 container. If the call failed to mount, no video element existed, blocking offline squat testing. | Implemented standalone camera fallback using `navigator.mediaDevices.getUserMedia` with explicit toggle button in error/connecting overlays and header. Enforced unmirrored valgus polarity (Left = -1, Right = +1). | **RESOLVED** |
+| **BUG-006** | Medium | CometChat Calls / Clinician View | Potential acoustic feedback howling in dual-tab testing, and clinician lacked moderator affordance to mute patient audio. | Dual-tab local testing causes audio feedback loops unless clinician is muted by default. Clinician view lacked invocation of Calls SDK v5 moderator API. | Enforced `startAudioMuted: true` in Clinician `SessionSettings` and added explicit "Mute Patient" moderator button invoking `CometChatCalls.muteParticipant(PATIENT_UID)`. | **RESOLVED** |
+| **BUG-007** | High | Build Pipeline / Security Audit | Risk of tsc emitting duplicate artifacts into `client/src` and leaking sensitive REST/Auth API keys in production client bundle. | `tsc -b && vite build` previously emitted compiled JavaScript files alongside source files in `client/src`, risking stale artifact imports and secret leakage. | Simplified `client/package.json` build command strictly to `vite build`, added automated unit test in `tests/e2e/bundle_audit.test.ts`, and enforced bundle regex scans for secrets and `apikey:` headers. | **RESOLVED** |
+| **BUG-008** | High | Client TypeScript / Build Pipeline | `pnpm typecheck` failed with TS6133: `'devL' is declared but its value is never read` and `'devR' is declared but its value is never read` in `Patient.tsx`. | In `Patient.tsx`, `devL` and `devR` were declared as local constants after calculating `rawDevL` and `rawDevR`, but all consumers were migrated to `rawDevL`/`rawDevR`, leaving unused locals. Since `client/tsconfig.json` enforces `noUnusedLocals: true`, workspace typecheck failed. | Removed unused `devL` and `devR` declarations, streamlined fallback camera stream attachment into `useEffect` with proper logging, and verified `pnpm typecheck` exits 0 cleanly. | **RESOLVED** |
 
 
 ---

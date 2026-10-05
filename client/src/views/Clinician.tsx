@@ -45,9 +45,11 @@ const COACHING_CUES: Array<{ id: CoachingCueType; label: string; icon: string }>
 export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSessionId, onEndSession }) => {
   const [sessionData, setSessionData] = useState<SessionResponse | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState<number>(0);
   const [callStatus, setCallStatus] = useState<'idle' | 'authenticating' | 'connecting' | 'connected' | 'ended' | 'error'>('idle');
   const [activeCueSent, setActiveCueSent] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [isPatientMuted, setIsPatientMuted] = useState<boolean>(false);
   const [repCount, setRepCount] = useState<number>(0);
   const [recentAlerts, setRecentAlerts] = useState<KineAlertPayload[]>([]);
 
@@ -114,6 +116,12 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
         const session = await requestSession('clinician', propSessionId);
         if (isCancelled) return;
         setSessionData(session);
+
+        if (session.authToken.startsWith('mock_token_')) {
+          throw new Error(
+            'CometChat Auth Key is truncated in .env (ends with "..."). Please update .env with your full 40-character key from app.cometchat.com'
+          );
+        }
 
         // 2. Init Chat SDK
         const chatSettings = new CometChat.AppSettingsBuilder()
@@ -226,7 +234,11 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
       } catch (err: unknown) {
         if (!isCancelled) {
           setCallStatus('error');
-          setInitError(err instanceof Error ? err.message : 'Failed to connect Clinician call session');
+          const errMsg =
+            (err as any)?.message ||
+            (err as any)?.error?.message ||
+            (typeof err === 'string' ? err : 'Failed to connect Clinician call session');
+          setInitError(errMsg);
         }
       }
     }
@@ -240,7 +252,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
         callTeardownRef.current = null;
       }
     };
-  }, [propSessionId]);
+  }, [propSessionId, retryKey]);
 
   // Dispatch Coaching Cue
   const handleSendCue = async (cue: CoachingCueType, text: string) => {
@@ -313,6 +325,20 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
     if (onEndSession) onEndSession();
   };
 
+  const handleMutePatient = async () => {
+    try {
+      // Calls SDK v5 moderator action (COMETCHAT_INTEGRATION.md #10)
+      const callsModerator = CometChatCalls as unknown as {
+        muteParticipant: (participantId: string) => Promise<unknown>;
+      };
+      await callsModerator.muteParticipant(PATIENT_UID);
+      setIsPatientMuted(true);
+      setTimeout(() => setIsPatientMuted(false), 3000);
+    } catch (err: unknown) {
+      console.warn('Failed to mute participant:', err);
+    }
+  };
+
   const isValgusAlert =
     (currentPose?.valgusDevPct.L !== null && (currentPose?.valgusDevPct.L ?? 0) > VALGUS_THRESHOLD_PCT) ||
     (currentPose?.valgusDevPct.R !== null && (currentPose?.valgusDevPct.R ?? 0) > VALGUS_THRESHOLD_PCT);
@@ -324,7 +350,8 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
         flexDirection: 'column',
         gap: 'var(--space-6)',
         width: '100%',
-        height: '100%',
+        minHeight: '100%',
+        position: 'relative',
         color: 'var(--text-primary)',
       }}
     >
@@ -373,6 +400,28 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <button
+            type="button"
+            onClick={handleMutePatient}
+            disabled={callStatus !== 'connected'}
+            style={{
+              padding: 'var(--space-2) var(--space-4)',
+              borderRadius: 'var(--radius-pill)',
+              border: isPatientMuted ? '1px solid var(--status-critical)' : '1px solid var(--surface-border-strong)',
+              backgroundColor: isPatientMuted ? 'rgba(239, 68, 68, 0.15)' : 'var(--surface-canvas-subtle)',
+              color: isPatientMuted ? 'var(--status-critical)' : 'var(--text-primary)',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: callStatus !== 'connected' ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-1)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {isPatientMuted ? '🔇 Patient Muted' : '🔇 Mute Patient'}
+          </button>
+
           <button
             type="button"
             onClick={handleCopyLink}
@@ -456,299 +505,317 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
         </motion.div>
       )}
 
-      {/* Main Studio Grid: Video Surface (Left) & Telemetry HUD / Cues (Right) */}
+      {/* 1. Substantially Enlarged Camera Window Container (Full Width) */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 1fr)',
-          gap: 'var(--space-6)',
-          alignItems: 'stretch',
-          minHeight: '480px',
+          position: 'relative',
+          width: '100%',
+          height: 'clamp(580px, 60vh, 640px)',
+          minHeight: '580px',
+          borderRadius: 'var(--radius-bento-card)',
+          overflow: 'hidden',
+          backgroundColor: 'var(--surface-dark-card)',
+          border: '1px solid var(--surface-dark-card-border)',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: 'var(--shadow-bento)',
+          flexShrink: 0,
         }}
       >
-        {/* Left Column: WebRTC Video Mount Container */}
-        <div
-          style={{
-            position: 'relative',
-            borderRadius: 'var(--radius-bento-card)',
-            overflow: 'hidden',
-            backgroundColor: 'var(--surface-dark-card)',
-            border: '1px solid var(--surface-dark-card-border)',
-            minHeight: '440px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {/* Status Overlay */}
-          {callStatus !== 'connected' && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                zIndex: 10,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'rgba(24, 25, 28, 0.92)',
-                color: 'var(--text-on-dark-primary)',
-                padding: 'var(--space-6)',
-                textAlign: 'center',
-                gap: 'var(--space-3)',
-              }}
-            >
-              {callStatus === 'connecting' || callStatus === 'authenticating' ? (
-                <>
-                  <div
-                    style={{
-                      width: '2.5rem',
-                      height: '2.5rem',
-                      borderRadius: '50%',
-                      border: '3px solid var(--surface-dark-card-border)',
-                      borderTopColor: 'var(--accent-lime)',
-                      animation: 'spin 1s linear infinite',
-                    }}
-                  />
-                  <p style={{ fontWeight: 600 }}>Connecting to Calls v5 Session...</p>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
-                    Setting up peer WebRTC connection with microphone muted.
-                  </p>
-                </>
-              ) : callStatus === 'error' ? (
-                <>
-                  <span style={{ fontSize: '2rem' }}>⚠️</span>
-                  <p style={{ fontWeight: 600, color: 'var(--status-critical)' }}>
-                    Connection Interrupted
-                  </p>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
-                    {initError || 'Failed to establish Calls v5 session.'}
-                  </p>
-                </>
-              ) : callStatus === 'ended' ? (
-                <>
-                  <span style={{ fontSize: '2rem' }}>🏁</span>
-                  <p style={{ fontWeight: 600 }}>Session Concluded</p>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
-                    Total repetitions completed: {repCount}
-                  </p>
-                </>
-              ) : null}
-            </div>
-          )}
-
-          {/* Calls v5 Mount Element (Explicit Non-Zero Height & Width) */}
-          <div
-            ref={callContainerRef}
-            style={{
-              width: '100%',
-              height: '100%',
-              minHeight: '440px',
-              flex: 1,
-            }}
-          />
-
-          {/* Telemetry Stream Indicator Pill */}
+        {/* Status Overlay */}
+        {callStatus !== 'connected' && (
           <div
             style={{
               position: 'absolute',
-              top: 'var(--space-3)',
-              left: 'var(--space-3)',
-              zIndex: 5,
+              inset: 0,
+              zIndex: 10,
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
-              gap: 'var(--space-2)',
-              padding: 'var(--space-1) var(--space-3)',
-              borderRadius: 'var(--radius-pill)',
-              backgroundColor: 'rgba(19, 20, 23, 0.75)',
-              backdropFilter: 'blur(4px)',
-              fontSize: '0.75rem',
+              justifyContent: 'center',
+              backgroundColor: 'rgba(24, 25, 28, 0.92)',
               color: 'var(--text-on-dark-primary)',
+              padding: 'var(--space-6)',
+              textAlign: 'center',
+              gap: 'var(--space-3)',
             }}
           >
-            <span
-              style={{
-                width: '0.5rem',
-                height: '0.5rem',
-                borderRadius: '50%',
-                backgroundColor: isTelemetryConnected ? 'var(--status-stable)' : 'var(--status-warning)',
-              }}
-            />
-            <span>{isTelemetryConnected ? '10 Hz Telemetry Live' : 'Waiting for telemetry...'}</span>
+            {callStatus === 'connecting' || callStatus === 'authenticating' ? (
+              <>
+                <div
+                  style={{
+                    width: '2.5rem',
+                    height: '2.5rem',
+                    borderRadius: '50%',
+                    border: '3px solid var(--surface-dark-card-border)',
+                    borderTopColor: 'var(--accent-lime)',
+                    animation: 'spin 1s linear infinite',
+                  }}
+                />
+                <p style={{ fontWeight: 600 }}>Connecting to Calls v5 Session...</p>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
+                  Setting up peer WebRTC connection with microphone muted.
+                </p>
+              </>
+            ) : callStatus === 'error' ? (
+              <>
+                <span style={{ fontSize: '2rem' }}>⚠️</span>
+                <p style={{ fontWeight: 600, color: 'var(--status-critical)' }}>
+                  Connection Interrupted
+                </p>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
+                  {initError || 'Failed to establish Calls v5 session.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setRetryKey((k) => k + 1)}
+                  style={{
+                    marginTop: 'var(--space-2)',
+                    padding: 'var(--space-2) var(--space-4)',
+                    borderRadius: 'var(--radius-pill)',
+                    border: 'none',
+                    backgroundColor: 'var(--accent-lime)',
+                    color: 'var(--surface-dark-sidebar)',
+                    fontWeight: 700,
+                    fontSize: '0.8125rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  🔄 Retry Connection
+                </button>
+              </>
+            ) : callStatus === 'ended' ? (
+              <>
+                <span style={{ fontSize: '2rem' }}>🏁</span>
+                <p style={{ fontWeight: 600 }}>Session Concluded</p>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
+                  Total repetitions completed: {repCount}
+                </p>
+              </>
+            ) : null}
           </div>
-        </div>
+        )}
 
-        {/* Right Column: Live Telemetry HUD & Coaching Cues */}
+        {/* Calls v5 Mount Element (Explicit Non-Zero Height & Width) */}
+        <div
+          ref={callContainerRef}
+          style={{
+            width: '100%',
+            height: '100%',
+            minHeight: '580px',
+            flex: 1,
+          }}
+        />
+
+        {/* Telemetry Stream Indicator Pill */}
         <div
           style={{
+            position: 'absolute',
+            top: 'var(--space-3)',
+            left: 'var(--space-3)',
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            padding: 'var(--space-1) var(--space-3)',
+            borderRadius: 'var(--radius-pill)',
+            backgroundColor: 'rgba(19, 20, 23, 0.75)',
+            backdropFilter: 'blur(4px)',
+            fontSize: '0.75rem',
+            color: 'var(--text-on-dark-primary)',
+          }}
+        >
+          <span
+            style={{
+              width: '0.5rem',
+              height: '0.5rem',
+              borderRadius: '50%',
+              backgroundColor: isTelemetryConnected ? 'var(--status-stable)' : 'var(--status-warning)',
+            }}
+          />
+          <span>{isTelemetryConnected ? '10 Hz Telemetry Live' : 'Waiting for telemetry...'}</span>
+        </div>
+      </div>
+
+      {/* 2. Controls & Kinematics Bento Row (Placed Below Camera Window) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+          gap: 'var(--space-6)',
+          width: '100%',
+          alignItems: 'stretch',
+        }}
+      >
+        {/* Bento Card 1: Real-Time Joint Angles & Depth */}
+        <div
+          style={{
+            backgroundColor: 'var(--surface-canvas-subtle)',
+            border: '1px solid var(--surface-border-subtle)',
+            borderRadius: 'var(--radius-bento-card)',
+            padding: 'var(--space-6)',
+            boxShadow: 'var(--shadow-bento)',
             display: 'flex',
             flexDirection: 'column',
+            justifyContent: 'space-between',
             gap: 'var(--space-4)',
           }}
         >
-          {/* Card 1: Real-Time Joint Angles & Depth */}
-          <div
-            style={{
-              backgroundColor: 'var(--surface-canvas-subtle)',
-              border: '1px solid var(--surface-border-subtle)',
-              borderRadius: 'var(--radius-bento-card)',
-              padding: 'var(--space-5)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-4)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                Kinematic Gauges (60 FPS Smoothed)
-              </span>
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  padding: 'var(--space-0-5) var(--space-2)',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor:
-                    currentPose?.phase === 'bottom'
-                      ? 'var(--accent-lime)'
-                      : 'var(--surface-canvas)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--surface-border-subtle)',
-                }}
-              >
-                Phase: {currentPose?.phase || 'standing'}
-              </span>
-            </div>
-
-            {/* Bilateral Knee Angles */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
-              <div
-                style={{
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius-control)',
-                  backgroundColor: 'var(--surface-canvas)',
-                  border: '1px solid var(--surface-border-subtle)',
-                }}
-              >
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Left Knee Flexion
-                </span>
-                <span
-                  style={{
-                    fontSize: '1.75rem',
-                    fontWeight: 800,
-                    letterSpacing: '-0.02em',
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  {displayKneeL}°
-                </span>
-                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-                  Valgus Dev: <strong style={{ color: displayValgusL > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{displayValgusL}%</strong>
-                </div>
-              </div>
-
-              <div
-                style={{
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius-control)',
-                  backgroundColor: 'var(--surface-canvas)',
-                  border: '1px solid var(--surface-border-subtle)',
-                }}
-              >
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Right Knee Flexion
-                </span>
-                <span
-                  style={{
-                    fontSize: '1.75rem',
-                    fontWeight: 800,
-                    letterSpacing: '-0.02em',
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  {displayKneeR}°
-                </span>
-                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-                  Valgus Dev: <strong style={{ color: displayValgusR > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{displayValgusR}%</strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Depth Gauge */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Pelvic Depth Progress</span>
-                <span style={{ fontWeight: 600 }}>{displayDepth}%</span>
-              </div>
-              <div
-                style={{
-                  height: '0.5rem',
-                  borderRadius: 'var(--radius-pill)',
-                  backgroundColor: 'var(--surface-border-strong)',
-                  overflow: 'hidden',
-                }}
-              >
-                <motion.div
-                  style={{
-                    height: '100%',
-                    backgroundColor: displayDepth >= 85 ? 'var(--status-stable)' : 'var(--accent-lime)',
-                    width: `${Math.min(100, displayDepth)}%`,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Rep Counter & FPS Metric */}
-            <div
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingTop: 'var(--space-2)',
-                borderTop: '1px solid var(--surface-border-subtle)',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--text-muted)',
               }}
             >
-              <div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Validated Reps
-                </span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-slate)' }}>
-                  {repCount}
-                </span>
+              Kinematic Gauges (60 FPS Smoothed)
+            </span>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                padding: 'var(--space-0-5) var(--space-2)',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor:
+                  currentPose?.phase === 'bottom'
+                    ? 'var(--accent-lime)'
+                    : 'var(--surface-canvas)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--surface-border-subtle)',
+              }}
+            >
+              Phase: {currentPose?.phase || 'standing'}
+            </span>
+          </div>
+
+          {/* Bilateral Knee Angles */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+            <div
+              style={{
+                padding: 'var(--space-3) var(--space-4)',
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--surface-canvas)',
+                border: '1px solid var(--surface-border-subtle)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Left Knee Flexion
+              </span>
+              <span
+                style={{
+                  fontSize: '1.75rem',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                {displayKneeL}°
+              </span>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
+                Valgus Dev: <strong style={{ color: displayValgusL > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{displayValgusL}%</strong>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                  Inference Rate
-                </span>
-                <span style={{ fontSize: '0.9375rem', fontWeight: 600 }}>
-                  {currentPose?.fps ? `${currentPose.fps} FPS` : '30 FPS'}
-                </span>
+            </div>
+
+            <div
+              style={{
+                padding: 'var(--space-3) var(--space-4)',
+                borderRadius: 'var(--radius-control)',
+                backgroundColor: 'var(--surface-canvas)',
+                border: '1px solid var(--surface-border-subtle)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Right Knee Flexion
+              </span>
+              <span
+                style={{
+                  fontSize: '1.75rem',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                {displayKneeR}°
+              </span>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
+                Valgus Dev: <strong style={{ color: displayValgusR > 8 ? 'var(--status-critical)' : 'var(--status-stable)' }}>{displayValgusR}%</strong>
               </div>
             </div>
           </div>
 
-          {/* Card 2: Tactile Coaching Cue Pad */}
+          {/* Depth Gauge */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Pelvic Depth Progress</span>
+              <span style={{ fontWeight: 600 }}>{displayDepth}%</span>
+            </div>
+            <div
+              style={{
+                height: '0.625rem',
+                borderRadius: 'var(--radius-pill)',
+                backgroundColor: 'var(--surface-border-strong)',
+                overflow: 'hidden',
+              }}
+            >
+              <motion.div
+                style={{
+                  height: '100%',
+                  backgroundColor: displayDepth >= 85 ? 'var(--status-stable)' : 'var(--accent-lime)',
+                  width: `${Math.min(100, displayDepth)}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Rep Counter & FPS Metric */}
           <div
             style={{
-              backgroundColor: 'var(--surface-dark-card)',
-              borderRadius: 'var(--radius-bento-card)',
-              border: '1px solid var(--surface-dark-card-border)',
-              padding: 'var(--space-5)',
               display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-3)',
-              color: 'var(--text-on-dark-primary)',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingTop: 'var(--space-2)',
+              borderTop: '1px solid var(--surface-border-subtle)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Validated Reps
+              </span>
+              <span style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-slate)' }}>
+                {repCount}
+              </span>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', fontWeight: 500 }}>
+                Inference Rate
+              </span>
+              <span style={{ fontSize: '0.9375rem', fontWeight: 600 }}>
+                {currentPose?.fps ? `${currentPose.fps} FPS` : '30 FPS'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Bento Card 2: Tactile Coaching Cue Pad */}
+        <div
+          style={{
+            backgroundColor: 'var(--surface-dark-card)',
+            borderRadius: 'var(--radius-bento-card)',
+            border: '1px solid var(--surface-dark-card-border)',
+            padding: 'var(--space-6)',
+            boxShadow: 'var(--shadow-bento)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 'var(--space-4)',
+            color: 'var(--text-on-dark-primary)',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
               <span
                 style={{
                   fontSize: '0.75rem',
@@ -765,7 +832,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
               </span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
               {COACHING_CUES.map((cue) => {
                 const isSent = activeCueSent === cue.id;
                 return (
@@ -777,7 +844,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
                     transition={springPresets.snappy}
                     onClick={() => handleSendCue(cue.id, cue.label)}
                     style={{
-                      padding: 'var(--space-3)',
+                      padding: 'var(--space-3) var(--space-4)',
                       borderRadius: 'var(--radius-control)',
                       border: isSent
                         ? '1px solid var(--accent-lime)'
@@ -804,29 +871,64 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
             </div>
           </div>
 
-          {/* Card 3: Recent Biomechanical Event Stream */}
-          {recentAlerts.length > 0 && (
-            <div
-              style={{
-                backgroundColor: 'var(--surface-canvas-subtle)',
-                border: '1px solid var(--surface-border-subtle)',
-                borderRadius: 'var(--radius-bento-card)',
-                padding: 'var(--space-4)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-2)',
-              }}
-            >
+          <div
+            style={{
+              fontSize: '0.75rem',
+              color: 'var(--text-on-dark-muted)',
+              borderTop: '1px solid var(--surface-dark-card-border)',
+              paddingTop: 'var(--space-3)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-2)',
+            }}
+          >
+            <span>⚡</span>
+            <span>Real-time tactile cues dispatch immediately to patient screen via CometChat.</span>
+          </div>
+        </div>
+
+        {/* Bento Card 3: Recent Biomechanical Event Stream */}
+        <div
+          style={{
+            backgroundColor: 'var(--surface-canvas-subtle)',
+            border: '1px solid var(--surface-border-subtle)',
+            borderRadius: 'var(--radius-bento-card)',
+            padding: 'var(--space-6)',
+            boxShadow: 'var(--shadow-bento)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 'var(--space-4)',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
               <span
                 style={{
                   fontSize: '0.75rem',
                   fontWeight: 700,
                   textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
                   color: 'var(--text-muted)',
                 }}
               >
                 Recent Form Alerts
               </span>
+              <span
+                style={{
+                  fontSize: '0.6875rem',
+                  fontWeight: 600,
+                  padding: 'var(--space-0-5) var(--space-2)',
+                  borderRadius: 'var(--radius-pill)',
+                  backgroundColor: recentAlerts.length > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                  color: recentAlerts.length > 0 ? 'var(--status-critical)' : 'var(--status-stable)',
+                }}
+              >
+                {recentAlerts.length > 0 ? `${recentAlerts.length} Recorded` : '0 Recorded'}
+              </span>
+            </div>
+
+            {recentAlerts.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
                 {recentAlerts.map((alert, idx) => (
                   <div
@@ -837,6 +939,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
                       justifyContent: 'space-between',
                       color: 'var(--status-critical)',
                       padding: 'var(--space-1) 0',
+                      borderBottom: idx < recentAlerts.length - 1 ? '1px solid var(--surface-border-subtle)' : 'none',
                     }}
                   >
                     <span>
@@ -846,8 +949,37 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <div
+                style={{
+                  padding: 'var(--space-3) 0',
+                  color: 'var(--text-muted)',
+                  fontSize: '0.8125rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                <span>✅</span>
+                <span>No form alerts recorded. Valgus alignment within safe threshold.</span>
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              fontSize: '0.75rem',
+              color: 'var(--text-muted)',
+              borderTop: '1px solid var(--surface-border-subtle)',
+              paddingTop: 'var(--space-3)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-2)',
+            }}
+          >
+            <span>🛡️</span>
+            <span>Triggered automatically when knee valgus deviation exceeds 8.0%.</span>
+          </div>
         </div>
       </div>
     </div>
