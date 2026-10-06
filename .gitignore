@@ -8,6 +8,7 @@ node_modules/
 dist/
 build/
 .npm/
+.vite/
 *.tsbuildinfo
 vitest.config.d.ts*
 vitest.config.js*
