@@ -52,7 +52,9 @@ import {
   computeValgusDeviation,
   computeDepthRatio,
   RepCounterStateMachine,
+  OneEuroFilter,
   type StandingBaseline,
+  type RepCounterOutput,
 } from '../engine';
 import {
   initializePoseLandmarker,
@@ -61,7 +63,22 @@ import {
 } from '../spikes/s1-pose/poseRunner';
 import { TelemetryTokenBucket } from '../spikes/s2-transient/rateCap';
 import { requestSession } from '../spikes/utils/tokenService';
+import {
+  ensureSessionGroup,
+  broadcastTelemetryEvent,
+  subscribeToBroadcastEvents,
+  extractCustomMessageData,
+  isDuplicateMessage,
+} from '../utils/telemetryTransport';
 import { springPresets } from '../styles/motionPresets';
+import {
+  computeCanvasOverlayBounds,
+  drawSkeletonOnCanvas,
+  findPatientVideoElement,
+  LandmarkSmoother2D,
+  isLowerBodyVisible,
+  type CanvasOverlayBounds,
+} from '../utils/canvasOverlayAligner';
 
 export interface PatientViewProps {
   sessionId?: string;
@@ -94,8 +111,12 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   const [activeToast, setActiveToast] = useState<{ id: number; text: string } | null>(null);
 
   const [isLocalCameraFallback, setIsLocalCameraFallback] = useState<boolean>(false);
+  const [isMirrorMode] = useState<boolean>(true);
+  const [isLowerBodyFramed, setIsLowerBodyFramed] = useState<boolean>(true);
+  const isLowerBodyFramedRef = useRef<boolean>(true);
 
   // DOM Refs
+  const cameraContainerRef = useRef<HTMLDivElement>(null);
   const callContainerRef = useRef<HTMLDivElement>(null);
   const fallbackVideoRef = useRef<HTMLVideoElement>(null);
   const fallbackStreamRef = useRef<MediaStream | null>(null);
@@ -103,18 +124,14 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   const activeVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Dynamic Canvas Bounds: Managed via React state so re-renders cannot clobber video alignment
-  const [canvasBounds, setCanvasBounds] = useState<{
-    left: string | number;
-    top: string | number;
-    width: string | number;
-    height: string | number;
-    objectFit: 'cover' | 'contain' | 'fill';
-  }>({
+  const [canvasBounds, setCanvasBounds] = useState<CanvasOverlayBounds>({
     left: 0,
     top: 0,
-    width: '100%',
-    height: '100%',
+    width: 0,
+    height: 0,
     objectFit: 'cover',
+    isMirrored: true,
+    borderRadius: '0px',
   });
 
   // Standalone Camera Fallback Functions
@@ -180,57 +197,80 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
   const repBadgeKeyRef = useRef<number>(0);
   const lastSyncTimeRef = useRef<number>(0);
 
+  // Rep Ledger State & Form Quality History
+  const [repLedger, setRepLedger] = useState<KineRepPayload[]>([]);
+
+  // 1€ (One-Euro) Adaptive Kinematic Filters (1.0 Hz static cutoff, 0.007 dynamic beta)
+  const oneEuroAngleLRef = useRef<OneEuroFilter>(new OneEuroFilter(1.0, 0.007, 1.0));
+  const oneEuroAngleRRef = useRef<OneEuroFilter>(new OneEuroFilter(1.0, 0.007, 1.0));
+  const oneEuroValgusLRef = useRef<OneEuroFilter>(new OneEuroFilter(1.0, 0.007, 1.0));
+  const oneEuroValgusRRef = useRef<OneEuroFilter>(new OneEuroFilter(1.0, 0.007, 1.0));
+
+  // Landmark 2D Coordinate Adaptive 1€ Smoother (eliminates frame-to-frame sensor jitter)
+  const landmarkSmootherRef = useRef<LandmarkSmoother2D>(new LandmarkSmoother2D(1.2, 8.0, 1.0));
+
   // In-Memory Outbox Queue Refs (D5.1)
   const outboxQueueRef = useRef<OutboxItem[]>([]);
   const isFlushingRef = useRef<boolean>(false);
 
   const activeSessionId = sessionData?.sessionId || propSessionId || '';
 
-  // Dynamic Canvas Alignment: Ensures the skeleton canvas overlays 1:1 onto the active video
+  // Dynamic Canvas Alignment: Ensures the skeleton canvas overlays 1:1 onto the active video with Retina scaling
   const syncCanvasToVideo = (videoEl: HTMLVideoElement | null) => {
-    if (!videoEl) return;
+    if (!videoEl || !cameraContainerRef.current) return;
 
-    if (isLocalCameraFallback) {
+    // Apply mirror CSS transform directly to video element ONLY if it is the confirmed patient video element
+    const isPatientVideo =
+      videoEl === activeVideoRef.current ||
+      videoEl === fallbackVideoRef.current ||
+      (!activeVideoRef.current && (isLocalCameraFallback || !callContainerRef.current));
+
+    if (isPatientVideo) {
+      videoEl.style.transform = isMirrorMode ? 'scaleX(-1)' : 'none';
+    }
+
+    const bounds = computeCanvasOverlayBounds(videoEl, cameraContainerRef.current, isMirrorMode);
+    if (bounds.width > 0 && bounds.height > 0) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const dpr = Math.min((typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1, 2);
+        canvas.width = Math.round(bounds.width * dpr);
+        canvas.height = Math.round(bounds.height * dpr);
+        canvas.style.width = bounds.width + 'px';
+        canvas.style.height = bounds.height + 'px';
+      }
+
       setCanvasBounds((prev) => {
         if (
-          prev.left === 0 &&
-          prev.top === 0 &&
-          prev.width === '100%' &&
-          prev.height === '100%' &&
-          prev.objectFit === 'cover'
+          prev.left === bounds.left &&
+          prev.top === bounds.top &&
+          prev.width === bounds.width &&
+          prev.height === bounds.height &&
+          prev.objectFit === bounds.objectFit &&
+          prev.isMirrored === isMirrorMode &&
+          prev.borderRadius === bounds.borderRadius
         ) {
           return prev;
         }
-        return { left: 0, top: 0, width: '100%', height: '100%', objectFit: 'cover' };
+        return {
+          ...bounds,
+          isMirrored: isMirrorMode,
+        };
       });
-      return;
-    }
-
-    if (callContainerRef.current) {
-      const vRect = videoEl.getBoundingClientRect();
-      const cRect = callContainerRef.current.getBoundingClientRect();
-      if (vRect.width > 0 && vRect.height > 0 && cRect.width > 0) {
-        const left = Math.round(vRect.left - cRect.left);
-        const top = Math.round(vRect.top - cRect.top);
-        const width = Math.round(vRect.width);
-        const height = Math.round(vRect.height);
-        const computedFit = (window.getComputedStyle(videoEl).objectFit as 'cover' | 'contain' | 'fill') || 'cover';
-
-        setCanvasBounds((prev) => {
-          if (
-            prev.left === left &&
-            prev.top === top &&
-            prev.width === width &&
-            prev.height === height &&
-            prev.objectFit === computedFit
-          ) {
-            return prev;
-          }
-          return { left, top, width, height, objectFit: computedFit };
-        });
-      }
     }
   };
+
+  // Synchronize active video element transform whenever mirror mode is toggled
+  useEffect(() => {
+    if (activeVideoRef.current) {
+      activeVideoRef.current.style.transform = isMirrorMode ? 'scaleX(-1)' : 'none';
+      syncCanvasToVideo(activeVideoRef.current);
+    }
+    if (fallbackVideoRef.current) {
+      fallbackVideoRef.current.style.transform = isMirrorMode ? 'scaleX(-1)' : 'none';
+      syncCanvasToVideo(fallbackVideoRef.current);
+    }
+  }, [isMirrorMode]);
 
   // In-Memory Outbox Queue Flush (D5.1)
   const flushOutboxQueue = async () => {
@@ -287,6 +327,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         const chatSettings = new CometChat.AppSettingsBuilder()
           .subscribePresenceForAllUsers()
           .setRegion(session.region)
+          .enableAutoJoinForGroups(true)
           .build();
         await CometChat.init(session.appId, chatSettings);
 
@@ -295,6 +336,32 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         if (!activeUser || activeUser.getUid() !== session.uid) {
           await CometChat.login(session.authToken);
         }
+
+        // Ensure Patient is joined to the session group
+        await ensureSessionGroup(session.sessionId);
+
+        // Register incoming coaching cue listener (kine.cue) immediately
+        const customListenerId = `kine-patient-cues-${session.sessionId}`;
+        CometChat.addMessageListener(
+          customListenerId,
+          new CometChat.MessageListener({
+            onCustomMessageReceived: (customMessage: CometChat.CustomMessage) => {
+              const msgType = customMessage.getType() || customMessage.getSubType();
+              const customData = extractCustomMessageData(customMessage) as any;
+              const type = customData?.type || msgType;
+
+              if (type === 'kine.cue') {
+                const cue = customData as KineCuePayload;
+                const key = `cue_${cue.t}_${cue.cue}`;
+                if (!isDuplicateMessage(key)) {
+                  const cueText = cue.text || cue.cue || 'Form Check';
+                  setActiveToast({ id: Date.now(), text: cueText });
+                  setTimeout(() => setActiveToast(null), 4000);
+                }
+              }
+            },
+          })
+        );
 
         // Register Connection Listener to flush outbox queue on reconnect (D5.1)
         const connListenerId = `kine-patient-conn-${session.sessionId}`;
@@ -358,26 +425,6 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
           if (!isCancelled) setCallStatus('connected');
         }
 
-        // Register incoming coaching cue listener (kine.cue)
-        const customListenerId = `kine-patient-cues-${session.sessionId}`;
-        CometChat.addMessageListener(
-          customListenerId,
-          new CometChat.MessageListener({
-            onCustomMessageReceived: (customMessage: CometChat.CustomMessage) => {
-              const msgType = customMessage.getType() || customMessage.getSubType();
-              const customData = customMessage.getCustomData() as any;
-              const type = customData?.type || msgType;
-
-              if (type === 'kine.cue') {
-                const cue = customData as KineCuePayload;
-                const cueText = cue.text || cue.cue || 'Form Check';
-                setActiveToast({ id: Date.now(), text: cueText });
-                setTimeout(() => setActiveToast(null), 4000);
-              }
-            },
-          })
-        );
-
         callTeardownRef.current = () => {
           unsubs.forEach((unsub) => {
             try {
@@ -429,34 +476,77 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     };
   }, [propSessionId, retryKey]);
 
+  // Dual-transport local BroadcastChannel listener for instant coaching cues
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    const unsubscribe = subscribeToBroadcastEvents(activeSessionId, {
+      onCue: (cue) => {
+        const cueText = cue.text || cue.cue || 'Form Check';
+        setActiveToast({ id: Date.now(), text: cueText });
+        setTimeout(() => setActiveToast(null), 4000);
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeSessionId]);
+
   // 2. Initialize MediaPipe PoseLandmarker and Tap Video Element
   useEffect(() => {
     let isPipelineActive = true;
     let pollIntervalId: ReturnType<typeof setInterval> | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
 
     const handleResize = () => {
-      let activeVideo = activeVideoRef.current;
-      if (!activeVideo || !document.contains(activeVideo)) {
-        if (isLocalCameraFallback && fallbackVideoRef.current) {
-          activeVideo = fallbackVideoRef.current;
-        } else if (callContainerRef.current) {
-          const videos = Array.from(callContainerRef.current.querySelectorAll('video'));
-          activeVideo = videos.find((v) => v.muted) || videos[0] || null;
-        }
-        activeVideoRef.current = activeVideo;
+      // Only re-evaluate findPatientVideoElement if activeVideoRef.current is disconnected or removed from the DOM.
+      // If activeVideoRef.current is still attached and playing, keep using that exact video element!
+      const isCurrentAttached =
+        activeVideoRef.current &&
+        activeVideoRef.current.isConnected &&
+        activeVideoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        activeVideoRef.current.videoWidth > 0;
+
+      if (isCurrentAttached) {
+        syncCanvasToVideo(activeVideoRef.current);
+        return;
       }
+
+      const activeVideo = findPatientVideoElement(
+        callContainerRef.current,
+        fallbackVideoRef.current,
+        isLocalCameraFallback,
+        PATIENT_UID,
+        'Patient Demo',
+        activeVideoRef.current
+      );
       if (activeVideo) {
+        activeVideoRef.current = activeVideo;
         syncCanvasToVideo(activeVideo);
       }
     };
     window.addEventListener('resize', handleResize);
 
-    if (typeof ResizeObserver !== 'undefined' && callContainerRef.current) {
+    if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
         handleResize();
       });
-      resizeObserver.observe(callContainerRef.current);
+      if (cameraContainerRef.current) resizeObserver.observe(cameraContainerRef.current);
+      if (callContainerRef.current) resizeObserver.observe(callContainerRef.current);
+    }
+
+    if (typeof MutationObserver !== 'undefined' && callContainerRef.current) {
+      mutationObserver = new MutationObserver(() => {
+        handleResize();
+      });
+      mutationObserver.observe(callContainerRef.current, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class'],
+      });
     }
 
     async function setupVisionPipeline() {
@@ -479,13 +569,14 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         // Zero-Contention Camera Ingestion:
         // Poll container for rendered <video> element (or fallback camera if active)
         const checkForVideoElement = () => {
-          let videoEl: HTMLVideoElement | null = null;
-          if (isLocalCameraFallback && fallbackVideoRef.current) {
-            videoEl = fallbackVideoRef.current;
-          } else if (callContainerRef.current) {
-            const videos = Array.from(callContainerRef.current.querySelectorAll('video'));
-            videoEl = videos.find((v) => v.muted) || videos[0] || null;
-          }
+          const videoEl = findPatientVideoElement(
+            callContainerRef.current,
+            fallbackVideoRef.current,
+            isLocalCameraFallback,
+            PATIENT_UID,
+            'Patient Demo',
+            activeVideoRef.current
+          );
 
           if (
             videoEl &&
@@ -527,6 +618,9 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       window.removeEventListener('resize', handleResize);
       if (resizeObserver) {
         resizeObserver.disconnect();
+      }
+      if (mutationObserver) {
+        mutationObserver.disconnect();
       }
       if (pollIntervalId) {
         clearInterval(pollIntervalId);
@@ -587,8 +681,12 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     const currentBaseline = baselineRef.current;
 
     // Compute Kinematics
-    const angleL = compute3DKneeFlexion(worldLandmarks3D[23], worldLandmarks3D[25], worldLandmarks3D[27]);
-    const angleR = compute3DKneeFlexion(worldLandmarks3D[24], worldLandmarks3D[26], worldLandmarks3D[28]);
+    const rawAngleL = compute3DKneeFlexion(worldLandmarks3D[23], worldLandmarks3D[25], worldLandmarks3D[27]);
+    const rawAngleR = compute3DKneeFlexion(worldLandmarks3D[24], worldLandmarks3D[26], worldLandmarks3D[28]);
+
+    // Adaptive 1€ Cutoff Filtering on Knee Angles (prevents digit flicker while tracking fast squats)
+    const angleL = oneEuroAngleLRef.current.filter(rawAngleL, now);
+    const angleR = oneEuroAngleRRef.current.filter(rawAngleR, now);
 
     // Unmirrored camera polarity enforcement:
     // Left Leg (landmarks 23, 25, 27): Medial collapse decreases X -> polarity = -1
@@ -600,6 +698,10 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       ? computeValgusDeviation(landmarks2D[24], landmarks2D[26], landmarks2D[28], currentBaseline, 'R')
       : null;
 
+    // Filter valgus deviation with 1€ filter to prevent spurious momentary spikes
+    const devL = rawDevL !== null ? oneEuroValgusLRef.current.filter(rawDevL, now) : null;
+    const devR = rawDevR !== null ? oneEuroValgusRRef.current.filter(rawDevR, now) : null;
+
     const depth = currentBaseline
       ? computeDepthRatio(landmarks2D[23].y * height, currentBaseline)
       : 0;
@@ -608,13 +710,20 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     const visR = ((landmarks2D[24]?.visibility ?? 1) + (landmarks2D[26]?.visibility ?? 1) + (landmarks2D[28]?.visibility ?? 1)) / 3;
     const avgVis = (visL + visR) / 2;
 
+    // Biomechanical framing guard: check if user is framed full-body or sitting too close
+    const lowerBodyFramed = isLowerBodyVisible(landmarks2D, 0.50);
+    if (lowerBodyFramed !== isLowerBodyFramedRef.current) {
+      isLowerBodyFramedRef.current = lowerBodyFramed;
+      setIsLowerBodyFramed(lowerBodyFramed);
+    }
+
     // Feed into Rep Counter State Machine
-    let fsmOutput = null;
+    let fsmOutput: RepCounterOutput | null = null;
     if (repCounterRef.current) {
       fsmOutput = repCounterRef.current.update({
         timestamp: Date.now(),
         kneeAngle: { L: angleL, R: angleR },
-        valgusDevPct: { L: rawDevL, R: rawDevR },
+        valgusDevPct: { L: devL, R: devR },
         depthRatio: depth,
         visibility: avgVis,
         sessionId: activeSessionId,
@@ -626,29 +735,32 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       if (angleR !== null) setKneeAngleR(Math.round(angleR));
       setDepthProgress(Math.round(Math.max(0, depth) * 100));
       setPhase(fsmOutput.phase);
-      setValgusL(rawDevL !== null ? Math.round(rawDevL * 10) / 10 : 0);
-      setValgusR(rawDevR !== null ? Math.round(rawDevR * 10) / 10 : 0);
+      setValgusL(devL !== null ? Math.round(devL * 10) / 10 : 0);
+      setValgusR(devR !== null ? Math.round(devR * 10) / 10 : 0);
 
       if (fsmOutput.reps > repCount) {
         setRepCount(fsmOutput.reps);
         repBadgeKeyRef.current += 1;
       }
 
-      // Dispatch Persisted Rep Message on rep completion (only if call active)
-      if (fsmOutput.completedRep && callStatus === 'connected') {
-        dispatchCustomRepMessage(fsmOutput.completedRep);
+      // Record completed rep in Rep Ledger and dispatch custom message
+      if (fsmOutput?.completedRep) {
+        setRepLedger((prev) => [...prev, fsmOutput!.completedRep!]);
+        if (activeSessionId) {
+          dispatchCustomRepMessage(fsmOutput.completedRep);
+        }
       }
 
-      // Dispatch Persisted Valgus Alerts (only if call active)
-      if (fsmOutput.alerts && fsmOutput.alerts.length > 0 && callStatus === 'connected') {
+      // Dispatch Persisted Valgus Alerts
+      if (fsmOutput.alerts && fsmOutput.alerts.length > 0 && activeSessionId) {
         for (const alert of fsmOutput.alerts) {
           dispatchCustomAlertMessage(alert);
         }
       }
     }
 
-    // 10 Hz Transient Messaging (Token Bucket Capped) - only when connected
-    if (tokenBucketRef.current.tryConsume() && activeSessionId && callStatus === 'connected') {
+    // 10 Hz Transient Messaging (Token Bucket Capped) - dispatches whenever session is active
+    if (tokenBucketRef.current.tryConsume() && activeSessionId) {
       const posePayload: KinePosePayload = {
         v: SCHEMA_VERSION,
         sid: activeSessionId,
@@ -658,12 +770,16 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
         fps: instantFps || 30,
         phase: fsmOutput ? fsmOutput.phase : 'standing',
         kneeFlexionDeg: { L: angleL, R: angleR },
-        valgusDevPct: { L: rawDevL, R: rawDevR },
+        valgusDevPct: { L: devL, R: devR },
         depthRatio: depth,
         vis: avgVis,
         reps: fsmOutput ? fsmOutput.reps : repCount,
       };
 
+      // 1. Dual-transport: Instant local cross-tab sync via BroadcastChannel
+      broadcastTelemetryEvent(activeSessionId, posePayload);
+
+      // 2. CometChat Transient Message for remote peers
       try {
         const transientMsg = new CometChat.TransientMessage(
           activeSessionId,
@@ -676,13 +792,21 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
       }
     }
 
-    // Render Dynamic 2D Canvas Skeleton Overlay
-    renderCanvasOverlay(landmarks2D, width, height, rawDevL, rawDevR);
+    // Apply 2D adaptive 1€ smoothing to filter high-frequency sensor noise while preserving zero movement lag
+    const smoothedLandmarks2D = landmarkSmootherRef.current.smooth(landmarks2D, now);
+
+    // Render Dynamic 2D Canvas Skeleton Overlay (with High-DPI scaling and dynamic guides)
+    renderCanvasOverlay(smoothedLandmarks2D, width, height, devL, devR, angleL, angleR);
   };
 
-  // Dispatch Persisted Custom Messages (with Outbox Retry Queue)
+  // Dispatch Persisted Custom Messages (with Dual Transport & Outbox Retry Queue)
   const dispatchCustomRepMessage = async (repPayload: KineRepPayload) => {
     if (!activeSessionId) return;
+
+    // 1. Instant local cross-tab sync via BroadcastChannel
+    broadcastTelemetryEvent(activeSessionId, repPayload);
+
+    // 2. CometChat Custom Message
     const customMsg = new CometChat.CustomMessage(
       activeSessionId,
       CometChat.RECEIVER_TYPE.GROUP,
@@ -699,6 +823,11 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
 
   const dispatchCustomAlertMessage = async (alertPayload: KineAlertPayload) => {
     if (!activeSessionId) return;
+
+    // 1. Instant local cross-tab sync via BroadcastChannel
+    broadcastTelemetryEvent(activeSessionId, alertPayload);
+
+    // 2. CometChat Custom Message
     const customMsg = new CometChat.CustomMessage(
       activeSessionId,
       CometChat.RECEIVER_TYPE.GROUP,
@@ -713,26 +842,40 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     }
   };
 
-  // 4. Render 2D Canvas Skeleton Overlay (Aligned 1:1)
+  // 4. Render 2D Canvas Skeleton Overlay (High-DPI Retina Scaled)
   const renderCanvasOverlay = (
     landmarks: any[],
-    width: number,
-    height: number,
+    videoWidth: number,
+    videoHeight: number,
     valgusDevL: number | null,
-    valgusDevR: number | null
+    valgusDevR: number | null,
+    angleL?: number | null,
+    angleR?: number | null
   ) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (canvasBounds.width <= 0 || canvasBounds.height <= 0) return;
 
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    const displayWidth = canvasBounds.width;
+    const displayHeight = canvasBounds.height;
+
+    const dpr = Math.min((typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1, 2);
+    const targetBufferWidth = Math.round(displayWidth * dpr);
+    const targetBufferHeight = Math.round(displayHeight * dpr);
+
+    if (canvas.width !== targetBufferWidth || canvas.height !== targetBufferHeight) {
+      canvas.width = targetBufferWidth;
+      canvas.height = targetBufferHeight;
+      canvas.style.width = displayWidth + 'px';
+      canvas.style.height = displayHeight + 'px';
     }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(dpr, dpr);
 
     // Resolve design tokens dynamically from CSS properties (ZERO raw hex codes in code)
     const computed = getComputedStyle(document.documentElement);
@@ -740,57 +883,30 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
     const colorCritical = computed.getPropertyValue('--status-critical').trim();
     const colorAccent = computed.getPropertyValue('--accent-lime').trim();
 
-    // Standard Lower-Body Skeleton Connections: Femur & Tibia
-    const connections: Array<[number, number]> = [
-      [11, 12], // Shoulders
-      [11, 23], [12, 24], // Torso
-      [23, 24], // Pelvis / Hip Line
-      [23, 25], // Left Femur
-      [25, 27], // Left Tibia
-      [24, 26], // Right Femur
-      [26, 28], // Right Tibia
-    ];
-
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = colorAccent;
-
-    for (const [startIdx, endIdx] of connections) {
-      const p1 = landmarks[startIdx];
-      const p2 = landmarks[endIdx];
-      if (p1 && p2 && (p1.visibility ?? 1) > 0.45 && (p2.visibility ?? 1) > 0.45) {
-        ctx.beginPath();
-        ctx.moveTo(p1.x * width, p1.y * height);
-        ctx.lineTo(p2.x * width, p2.y * height);
-        ctx.stroke();
+    drawSkeletonOnCanvas(
+      ctx,
+      landmarks,
+      videoWidth,
+      videoHeight,
+      displayWidth,
+      displayHeight,
+      canvasBounds.objectFit,
+      canvasBounds.isMirrored,
+      valgusDevL,
+      valgusDevR,
+      VALGUS_THRESHOLD_PCT,
+      {
+        stable: colorStable,
+        critical: colorCritical,
+        accent: colorAccent,
+      },
+      {
+        L: angleL,
+        R: angleR,
       }
-    }
+    );
 
-    // Lower Body Joint Highlights & Valgus Deviation Vectors
-    const joints = [23, 24, 25, 26, 27, 28];
-    for (const jIdx of joints) {
-      const lm = landmarks[jIdx];
-      if (!lm || (lm.visibility ?? 1) < 0.45) continue;
-
-      const px = lm.x * width;
-      const py = lm.y * height;
-
-      // Color coding based on valgus status for knees (25 L, 26 R)
-      let jointColor = colorStable;
-      if (jIdx === 25 && valgusDevL !== null && valgusDevL > VALGUS_THRESHOLD_PCT) {
-        jointColor = colorCritical;
-      } else if (jIdx === 26 && valgusDevR !== null && valgusDevR > VALGUS_THRESHOLD_PCT) {
-        jointColor = colorCritical;
-      }
-
-      ctx.fillStyle = jointColor;
-      ctx.beginPath();
-      ctx.arc(px, py, 7, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = colorAccent;
-      ctx.stroke();
-    }
+    ctx.restore();
   };
 
   // Explicit Recalibration Trigger
@@ -895,9 +1011,6 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
               {PATIENT_UID}
             </span>
           </div>
-          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Session: <strong>{activeSessionId || 'Connecting...'}</strong> • Zero-Contention Camera Tap
-          </span>
         </div>
 
         {/* Header Controls */}
@@ -965,6 +1078,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
 
       {/* 1. Substantially Enlarged Camera Window Container (Full Width) */}
       <div
+        ref={cameraContainerRef}
         style={{
           position: 'relative',
           width: '100%',
@@ -1101,6 +1215,7 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
               height: '100%',
               minHeight: '580px',
               objectFit: 'cover',
+              transform: isMirrorMode ? 'scaleX(-1)' : 'none',
               flex: 1,
             }}
           />
@@ -1113,13 +1228,110 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
             position: 'absolute',
             left: canvasBounds.left,
             top: canvasBounds.top,
-            width: canvasBounds.width,
-            height: canvasBounds.height,
-            objectFit: canvasBounds.objectFit,
+            width: canvasBounds.width > 0 ? canvasBounds.width : 0,
+            height: canvasBounds.height > 0 ? canvasBounds.height : 0,
+            borderRadius: canvasBounds.borderRadius,
+            transform: 'none',
             pointerEvents: 'none',
             zIndex: 5,
+            display: canvasBounds.width > 0 && canvasBounds.height > 0 ? 'block' : 'none',
           }}
         />
+
+        {/* Framing Guidance Prompt: Alerts when user is sitting close-up without full-body framing */}
+        <AnimatePresence>
+          {!isLowerBodyFramed && (callStatus === 'connected' || isLocalCameraFallback) && (
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              style={{
+                position: 'absolute',
+                top: 'var(--space-4)',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 8,
+                backgroundColor: 'rgba(239, 68, 68, 0.92)',
+                color: 'var(--text-on-dark-primary)',
+                border: '1px solid rgba(255, 255, 255, 0.35)',
+                borderRadius: 'var(--radius-pill)',
+                padding: 'var(--space-2) var(--space-5)',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.45)',
+                fontWeight: 700,
+                fontSize: '0.8125rem',
+                letterSpacing: '-0.01em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                pointerEvents: 'none',
+              }}
+            >
+              <span>📷 Step back to frame full body for squat tracking</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Real-Time Visual Posture Pillar */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 'var(--space-6)',
+            right: 'var(--space-4)',
+            bottom: 'var(--space-6)',
+            width: '24px',
+            backgroundColor: 'rgba(19, 20, 23, 0.65)',
+            backdropFilter: 'blur(8px)',
+            borderRadius: 'var(--radius-pill)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            padding: '3px',
+            zIndex: 6,
+            overflow: 'hidden',
+          }}
+          title="Posture Pillar: Dynamic Depth & Alignment Guide"
+        >
+          {/* Target depth indicator line */}
+          <div
+            style={{
+              position: 'absolute',
+              top: '25%',
+              left: 0,
+              right: 0,
+              height: '2px',
+              backgroundColor: 'var(--text-primary)',
+              opacity: 0.6,
+              zIndex: 2,
+            }}
+          />
+          {/* Pillar Fill */}
+          <motion.div
+            animate={{
+              height: `${Math.min(100, Math.max(8, depthProgress * 100))}%`,
+              backgroundColor:
+                valgusL > VALGUS_THRESHOLD_PCT || valgusR > VALGUS_THRESHOLD_PCT
+                  ? 'var(--status-critical)'
+                  : depthProgress > 0.8
+                  ? 'var(--accent-cyan)'
+                  : 'var(--status-stable)',
+            }}
+            transition={{ duration: 0.1, ease: 'easeOut' }}
+            style={{
+              width: '100%',
+              borderRadius: 'var(--radius-pill)',
+              boxShadow:
+                valgusL > VALGUS_THRESHOLD_PCT || valgusR > VALGUS_THRESHOLD_PCT
+                  ? '0 0 12px var(--status-critical)'
+                  : depthProgress > 0.8
+                  ? 'var(--shadow-glow-cyan)'
+                  : '0 0 10px var(--status-stable)',
+            }}
+          />
+        </div>
+
 
         {/* Calibrated Status Badge */}
         <div
@@ -1260,6 +1472,31 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
             >
               {isCalibrated ? '● Baseline Calibrated' : '⏳ Stand upright to calibrate'}
             </span>
+            {repLedger.length > 0 && repLedger[repLedger.length - 1].formScore !== undefined && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: 'var(--space-1) var(--space-3)',
+                  borderRadius: 'var(--radius-pill)',
+                  backgroundColor:
+                    (repLedger[repLedger.length - 1].formScore ?? 0) >= 85
+                      ? 'rgba(16, 185, 129, 0.2)'
+                      : (repLedger[repLedger.length - 1].formScore ?? 0) >= 65
+                      ? 'rgba(245, 158, 11, 0.2)'
+                      : 'rgba(239, 68, 68, 0.2)',
+                  color:
+                    (repLedger[repLedger.length - 1].formScore ?? 0) >= 85
+                      ? 'var(--status-stable)'
+                      : (repLedger[repLedger.length - 1].formScore ?? 0) >= 65
+                      ? 'var(--status-warning)'
+                      : 'var(--status-critical)',
+                  fontWeight: 700,
+                }}
+              >
+                ★ Form Score: {repLedger[repLedger.length - 1].formScore}% (
+                {repLedger[repLedger.length - 1].formRating})
+              </span>
+            )}
           </div>
         </div>
 
@@ -1288,9 +1525,6 @@ export const Patient: React.FC<PatientViewProps> = ({ sessionId: propSessionId, 
               }}
             >
               Real-Time Joint Kinematics
-            </span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-              Threshold: ≤ 8.0% Valgus
             </span>
           </div>
 

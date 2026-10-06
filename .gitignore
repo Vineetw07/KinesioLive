@@ -29,3 +29,31 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# User requested exclusions
+.agents/
+qa/
+PROJECT_RULES.md
+AGENTS.md
+GLOSSARY.md
+PROJECT.md
+
+# AI agents, prompts, skills, and scratch artifacts
+docs/agents/
+docs/archive/
+.scratch/
+*.diff
+*.patch
+cometchat-skills/
+.cometchat/
+.claude/
+.cursor/
+.cline/
+.windsurf/
+.system_generated/
+Hackathoninfo/
+
+# Credentials, keys & certificates
+*.pem
+*.key
+*.cert

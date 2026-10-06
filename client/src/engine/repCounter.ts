@@ -21,6 +21,7 @@ import type {
   SquatPhase,
   SquatDepthRating,
   SquatTempo,
+  RepFormRating,
   KineRepPayload,
   KineAlertPayload,
 } from '@kinesio/shared';
@@ -38,6 +39,131 @@ import {
   type Point2D,
   type StandingBaseline,
 } from './geometry';
+
+export type FormQualityRating = RepFormRating;
+
+/**
+ * Biomechanical metrics ingested for repetition form quality assessment.
+ */
+export interface RepFormMetrics {
+  /** Lowest knee angle reached during rep (degrees) */
+  minKneeDeg: number;
+  /** Peak normalized pelvic descent ratio achieved during rep */
+  maxDepthRatio: number;
+  /** Total repetition duration in milliseconds */
+  durMs: number;
+  /** Descent phase duration in milliseconds */
+  descentMs?: number;
+  /** Ascent phase duration in milliseconds */
+  ascentMs?: number;
+  /** Peak left knee valgus deviation percentage */
+  peakValgusL?: number;
+  /** Peak right knee valgus deviation percentage */
+  peakValgusR?: number;
+  /** Mean left knee valgus deviation percentage over repetition */
+  meanValgusL?: number;
+  /** Mean right knee valgus deviation percentage over repetition */
+  meanValgusR?: number;
+}
+
+/**
+ * Form quality result containing numerical score (0-100) and clinical rating.
+ */
+export interface FormQualityResult {
+  /** Composite biomechanical rep quality score (0 - 100) */
+  formScore: number;
+  /** Categorical clinical grade */
+  formRating: FormQualityRating;
+  /** Component scoring breakdown */
+  breakdown: {
+    depthScore: number;  // 0 - 40
+    valgusScore: number; // 0 - 35
+    tempoScore: number;  // 0 - 25
+  };
+}
+
+/**
+ * Evaluates squat repetition form quality against clinical biomechanical envelopes.
+ *
+ * Scored across three clinical criteria:
+ * 1. Depth Compliance (40 pts): target depthRatio >= 0.70 or flexion <= 100 deg (parallel).
+ * 2. Valgus Stability Penalty (35 pts): penalizes peak and mean medial knee collapse (> 3%).
+ * 3. Tempo Symmetry & Control (25 pts): rewards controlled eccentric/concentric balance and cadence.
+ */
+export function evaluateRepFormQuality(metrics: RepFormMetrics): FormQualityResult {
+  // 1. Depth Compliance (Max 40 points)
+  // Target: depthRatio >= 0.70 OR minKneeDeg <= 100 deg
+  const kneeFlex = Number.isFinite(metrics.minKneeDeg) ? metrics.minKneeDeg : 180.0;
+  const depthRatio = Number.isFinite(metrics.maxDepthRatio) ? metrics.maxDepthRatio : 0.0;
+
+  // Linear interpolation: knee angle from 160 deg (0 pts) down to 80 deg (40 pts)
+  const angleScore = Math.min(40, Math.max(0, ((160.0 - kneeFlex) / (160.0 - 80.0)) * 40.0));
+  // Depth ratio: from 0.20 (0 pts) up to 0.85 (40 pts)
+  const ratioScore = Math.min(40, Math.max(0, ((depthRatio - 0.20) / (0.85 - 0.20)) * 40.0));
+  let depthScore = Math.max(angleScore, ratioScore);
+
+  // If rep met clinical parallel threshold (depthRatio >= 0.70 or kneeFlex <= 100), ensure >= 30 pts
+  if ((depthRatio >= 0.70 || kneeFlex <= 100.0) && depthScore < 30.0) {
+    depthScore = 30.0;
+  }
+  depthScore = Math.min(40, Math.max(0, Math.round(depthScore * 10) / 10));
+
+  // 2. Valgus Stability Penalty (Max 35 points)
+  // Neutral: peak valgus <= 3.0% -> full 35 pts
+  // Severe collapse: peak valgus > 8.0% -> significant penalty
+  const peakValgus = Math.max(0, metrics.peakValgusL ?? 0, metrics.peakValgusR ?? 0);
+  const meanValgus = Math.max(0, metrics.meanValgusL ?? 0, metrics.meanValgusR ?? 0);
+
+  let valgusDeduction = 0;
+  if (peakValgus > 3.0) {
+    valgusDeduction = (peakValgus - 3.0) * 2.5 + meanValgus * 1.5;
+  }
+  const valgusScore = Math.min(35, Math.max(0, Math.round((35.0 - valgusDeduction) * 10) / 10));
+
+  // 3. Ascent/Descent Tempo Symmetry & Control (Max 25 points)
+  const durMs = Number.isFinite(metrics.durMs) && metrics.durMs > 0 ? metrics.durMs : 1500;
+  let descentMs = metrics.descentMs ?? durMs / 2.0;
+  let ascentMs = metrics.ascentMs ?? durMs / 2.0;
+  if (!Number.isFinite(descentMs) || descentMs <= 0) descentMs = durMs / 2.0;
+  if (!Number.isFinite(ascentMs) || ascentMs <= 0) ascentMs = durMs / 2.0;
+
+  // Symmetry: ratio of min(phase) / max(phase)
+  const maxPhase = Math.max(descentMs, ascentMs);
+  const minPhase = Math.min(descentMs, ascentMs);
+  const symmetry = maxPhase > 0 ? minPhase / maxPhase : 1.0;
+
+  // Pacing factor: penalize dive-bomb bounces (< 1000 ms) or dragged reps (> 5000 ms)
+  let pacingFactor = 1.0;
+  if (durMs < 1000) {
+    pacingFactor = Math.max(0.5, durMs / 1000.0);
+  } else if (durMs > 5000) {
+    pacingFactor = Math.max(0.6, 1.0 - (durMs - 5000.0) / 5000.0);
+  }
+
+  const tempoScore = Math.min(25, Math.max(0, Math.round(25.0 * symmetry * pacingFactor * 10) / 10));
+
+  // Total Form Score (0 - 100)
+  const totalScore = Math.min(100, Math.max(0, Math.round(depthScore + valgusScore + tempoScore)));
+
+  let formRating: FormQualityRating;
+  if (totalScore >= 85) {
+    formRating = 'excellent';
+  } else if (totalScore >= 65) {
+    formRating = 'good';
+  } else {
+    formRating = 'needs_work';
+  }
+
+  return {
+    formScore: totalScore,
+    formRating,
+    breakdown: {
+      depthScore,
+      valgusScore,
+      tempoScore,
+    },
+  };
+}
 
 /**
  * Options for configuring the RepCounterStateMachine.
@@ -139,6 +265,10 @@ export interface RepCounterOutput {
   maxDepthRatio: number;
   /** Current pelvic descent ratio */
   depthRatio: number;
+  /** Biomechanical form quality score (0 - 100) of completed rep, or null */
+  formScore?: number | null;
+  /** Clinical form quality rating of completed rep, or null */
+  formRating?: FormQualityRating | null;
 }
 
 /**
@@ -208,6 +338,13 @@ export class RepCounterStateMachine {
   // Rejection flags for the most recent rep completion
   private _lastRepRejectedShallow: boolean = false;
   private _lastRepRejectedBounce: boolean = false;
+
+  // Rep form quality tracking state
+  private _ascentStartTime: number | null = null;
+  private _repValgusSamplesL: number[] = [];
+  private _repValgusSamplesR: number[] = [];
+  private _lastFormScore: number | null = null;
+  private _lastFormRating: FormQualityRating | null = null;
 
   // Configuration options
   public readonly minValidKneeDeg: number;
@@ -349,12 +486,18 @@ export class RepCounterStateMachine {
         if (depthRatio > 0.25 || thetaKnee < 150.0) {
           this._phase = 'descending';
           this._repStartTime = timestamp;
+          this._ascentStartTime = null;
+          this._repValgusSamplesL = [];
+          this._repValgusSamplesR = [];
           this._minKneeDeg = thetaKnee;
           this._maxDepthRatio = depthRatio;
           this._valgusFramesL = 0;
           this._valgusFramesR = 0;
           this._lastRepRejectedShallow = false;
           this._lastRepRejectedBounce = false;
+
+          if (valgusL !== null && Number.isFinite(valgusL)) this._repValgusSamplesL.push(valgusL);
+          if (valgusR !== null && Number.isFinite(valgusR)) this._repValgusSamplesR.push(valgusR);
 
           // Check valgus on first frame of descent
           this.checkValgusAlert(valgusL, 'L', timestamp, alerts);
@@ -367,6 +510,9 @@ export class RepCounterStateMachine {
         if (thetaKnee < this._minKneeDeg) this._minKneeDeg = thetaKnee;
         if (depthRatio > this._maxDepthRatio) this._maxDepthRatio = depthRatio;
 
+        if (valgusL !== null && Number.isFinite(valgusL)) this._repValgusSamplesL.push(valgusL);
+        if (valgusR !== null && Number.isFinite(valgusR)) this._repValgusSamplesR.push(valgusR);
+
         // Transition 2: descending -> bottom
         if (depthRatio > 0.85 || thetaKnee < 100.0) {
           this._phase = 'bottom';
@@ -375,6 +521,7 @@ export class RepCounterStateMachine {
         // Prevents FSM deadlock when user reverses without reaching bottom threshold
         else if (thetaKnee > this._minKneeDeg + 10.0 && depthRatio < this._maxDepthRatio) {
           this._phase = 'ascending';
+          if (this._ascentStartTime === null) this._ascentStartTime = timestamp;
         }
 
         // Valgus alert detector active during descending
@@ -387,9 +534,13 @@ export class RepCounterStateMachine {
         if (thetaKnee < this._minKneeDeg) this._minKneeDeg = thetaKnee;
         if (depthRatio > this._maxDepthRatio) this._maxDepthRatio = depthRatio;
 
+        if (valgusL !== null && Number.isFinite(valgusL)) this._repValgusSamplesL.push(valgusL);
+        if (valgusR !== null && Number.isFinite(valgusR)) this._repValgusSamplesR.push(valgusR);
+
         // Transition 4: bottom -> ascending
         if (thetaKnee > 110.0 && depthRatio < this._maxDepthRatio) {
           this._phase = 'ascending';
+          if (this._ascentStartTime === null) this._ascentStartTime = timestamp;
         }
 
         // Valgus alert detector active during bottom
@@ -400,6 +551,9 @@ export class RepCounterStateMachine {
 
       case 'ascending': {
         if (thetaKnee < this._minKneeDeg) this._minKneeDeg = thetaKnee;
+
+        if (valgusL !== null && Number.isFinite(valgusL)) this._repValgusSamplesL.push(valgusL);
+        if (valgusR !== null && Number.isFinite(valgusR)) this._repValgusSamplesR.push(valgusR);
 
         // Transition 5: ascending -> standing (Rep Validation Gate)
         if (thetaKnee > 160.0 && depthRatio < 0.20) {
@@ -414,6 +568,37 @@ export class RepCounterStateMachine {
             const tempo: SquatTempo =
               durMs < 1200 ? 'fast' : (durMs <= 3500 ? 'controlled' : 'slow');
 
+            const descentMs = this._ascentStartTime !== null && this._repStartTime !== null
+              ? Math.max(0, this._ascentStartTime - this._repStartTime)
+              : Math.round(durMs / 2.0);
+            const ascentMs = this._ascentStartTime !== null
+              ? Math.max(0, timestamp - this._ascentStartTime)
+              : Math.round(durMs / 2.0);
+
+            const peakValgusL = this._repValgusSamplesL.length > 0 ? Math.max(...this._repValgusSamplesL) : 0;
+            const peakValgusR = this._repValgusSamplesR.length > 0 ? Math.max(...this._repValgusSamplesR) : 0;
+            const meanValgusL = this._repValgusSamplesL.length > 0
+              ? this._repValgusSamplesL.reduce((a, b) => a + b, 0) / this._repValgusSamplesL.length
+              : 0;
+            const meanValgusR = this._repValgusSamplesR.length > 0
+              ? this._repValgusSamplesR.reduce((a, b) => a + b, 0) / this._repValgusSamplesR.length
+              : 0;
+
+            const quality = evaluateRepFormQuality({
+              minKneeDeg: this._minKneeDeg,
+              maxDepthRatio: this._maxDepthRatio,
+              durMs,
+              descentMs,
+              ascentMs,
+              peakValgusL,
+              peakValgusR,
+              meanValgusL,
+              meanValgusR,
+            });
+
+            this._lastFormScore = quality.formScore;
+            this._lastFormRating = quality.formRating;
+
             completedRep = {
               v: SCHEMA_VERSION,
               sid: this._sessionId,
@@ -424,6 +609,8 @@ export class RepCounterStateMachine {
               depth,
               durMs,
               tempo,
+              formScore: quality.formScore,
+              formRating: quality.formRating,
             };
             isShallow = false;
             isBounce = false;
@@ -474,6 +661,8 @@ export class RepCounterStateMachine {
     this._lastRepRejectedShallow = false;
     this._lastRepRejectedBounce = false;
     this._currentDepthRatio = 0.0;
+    this._lastFormScore = null;
+    this._lastFormRating = null;
   }
 
   /**
@@ -481,10 +670,13 @@ export class RepCounterStateMachine {
    */
   private resetRepState(): void {
     this._repStartTime = null;
+    this._ascentStartTime = null;
     this._minKneeDeg = 180.0;
     this._maxDepthRatio = 0.0;
     this._valgusFramesL = 0;
     this._valgusFramesR = 0;
+    this._repValgusSamplesL = [];
+    this._repValgusSamplesR = [];
   }
 
   /**
@@ -736,10 +928,20 @@ export class RepCounterStateMachine {
       minKneeDeg: this._minKneeDeg,
       maxDepthRatio: this._maxDepthRatio,
       depthRatio,
+      formScore: this._lastFormScore,
+      formRating: this._lastFormRating,
     };
   }
 
   // Convenience Accessors
+  public get lastFormScore(): number | null {
+    return this._lastFormScore;
+  }
+
+  public get lastFormRating(): FormQualityRating | null {
+    return this._lastFormRating;
+  }
+
   public get phase(): SquatPhase {
     return this._phase;
   }

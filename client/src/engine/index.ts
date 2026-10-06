@@ -66,6 +66,9 @@ export {
   ExponentialMovingAverageFilter,
   MedianFilter,
   EmaFilter,
+  OneEuroFilter,
+  EuroFilter,
+  type OneEuroFilterOptions,
 } from './smoothing';
 
 // ============================================================================
@@ -74,6 +77,10 @@ export {
 export {
   RepCounterStateMachine,
   RepCounter,
+  evaluateRepFormQuality,
+  type RepFormMetrics,
+  type FormQualityResult,
+  type FormQualityRating,
   type RepCounterInput,
   type RepCounterFrameInput,
   type RepCounterOutput,

@@ -1,0 +1,3 @@
+# Calibrated Standing Baseline for Valgus Deviation
+
+When evaluating knee valgus (medial inward displacement), normalizing against the instantaneous runtime distance between hip and ankle causes the reported deviation percentage to double at the bottom of a squat because the leg folds and halves in vertical height. We decided to normalize valgus displacement exclusively against a calibrated standing baseline ($L_{\text{standing}}$) captured during the initial standing posture. This guarantees invariant denominator scaling throughout the full range of motion at the cost of requiring an initial posture calibration phase.

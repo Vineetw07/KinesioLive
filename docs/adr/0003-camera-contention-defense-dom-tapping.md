@@ -1,0 +1,3 @@
+# Camera Contention Defense via DOM Video Element Tapping
+
+On Windows and Chromium, opening two concurrent `getUserMedia` camera streams from the same web page causes the hardware camera driver to throw an unrecoverable `NotReadableError`. Because CometChat Calls SDK v5 requires exclusive hardware control to establish WebRTC media, we decided not to request an independent media stream for MediaPipe Pose Landmarker, and instead tap the Calls SDK's mounted `<video>` element directly using `requestVideoFrameCallback`. This eliminates device lock contention and ensures video streaming and pose inference execute synchronously on the exact same frame pipeline.

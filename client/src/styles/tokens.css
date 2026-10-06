@@ -1,29 +1,33 @@
 :root {
   /* =========================================================================
-     1. Surface & Canvas Tokens
+     1. Surface & Canvas Tokens (Dark Bluish Biomechanical Theme)
      ========================================================================= */
-  --surface-app-frame: #F4F6EA;        /* Soft ambient backdrop outside canvas */
-  --surface-canvas: #FFFFFF;           /* Primary floating island canvas */
-  --surface-canvas-subtle: #F9FAFB;    /* Secondary card background */
-  --surface-border-subtle: #F0F1F5;    /* 1px structural dividing lines */
-  --surface-border-strong: #E5E7EB;    /* Form controls & search borders */
+  --surface-app-frame: #070B14;        /* Deep midnight obsidian navy */
+  --surface-canvas: rgba(11, 19, 43, 0.85); /* Frosted dark cobalt glass canvas */
+  --surface-canvas-subtle: #0D162A;    /* Secondary dark slate card background */
+  --surface-border-subtle: rgba(56, 189, 248, 0.14); /* Subtle luminous cyan dividing lines */
+  --surface-border-strong: rgba(56, 189, 248, 0.28); /* Elevated active cyan borders */
   
-  --surface-dark-sidebar: #131417;     /* High-contrast left navigation bar */
-  --surface-dark-card: #18191C;        /* Inverted bottom-right anchor bento tile */
-  --surface-dark-card-border: #26282E; /* Border on dark surfaces */
-  --surface-dark-card-hover: #222429;  /* Elevated state for dark components */
+  --surface-dark-sidebar: #050810;     /* Ultra-deep obsidian sidebar */
+  --surface-dark-card: #0A1124;        /* Inverted deep bento tile */
+  --surface-dark-card-border: rgba(56, 189, 248, 0.22); /* Border on dark surfaces */
+  --surface-dark-card-hover: #131E3A;  /* Elevated state for dark components */
 
   /* =========================================================================
-     2. Typography & Contrast Tokens (WCAG 2.1 AA Guaranteed)
+     2. Typography & Contrast Tokens (High-Contrast Luminous Palette)
      ========================================================================= */
-  --text-primary: #111827;             /* Heading & primary metric text (14:1) */
-  --text-secondary: #4B5563;           /* Captions & secondary metrics (5.4:1) */
-  --text-muted: #6B7280;               /* Helper text, timestamps (4.6:1) */
-  --text-disabled: #9CA3AF;            /* Disabled state text only */
+  --text-primary: #F8FAFC;             /* Luminous crisp titanium white (16:1 on dark) */
+  --text-secondary: #94A3B8;           /* Cool ice-slate captions (7:1 on dark) */
+  --text-muted: #64748B;               /* Technical helper text & timestamps */
+  --text-disabled: #475569;            /* Disabled state text */
   
-  --text-on-dark-primary: #F9FAFB;     /* High-contrast text on dark surfaces */
+  --text-on-dark-primary: #F8FAFC;     /* High-contrast text on dark surfaces */
   --text-on-dark-secondary: #94A3B8;   /* Muted labels on dark surfaces */
   --text-on-dark-muted: #64748B;       /* Secondary captions on dark surfaces */
+
+  --text-hero-headline: #070B14;       /* Ultra-deep obsidian headline for high contrast over light studio video */
+  --text-hero-body: #0F172A;           /* Deep slate body copy (16:1 contrast on studio light background) */
+  --text-hero-muted: #334155;          /* Crisp dark slate for secondary hero text */
 
   /* =========================================================================
      3. Biomechanical Brand & Accent Tokens
@@ -78,4 +82,18 @@
 
   /* Typography Base */
   --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* =========================================================================
+     7. Luminous Accent & Terminal Tokens
+     ========================================================================= */
+  --accent-cyan-bright: #38BDF8;
+  --accent-lime-vibrant: #84CC16;
+  --surface-pure-white: #FFFFFF;
+  --surface-light-gray: #F3F4F6;
+  --surface-terminal-bg: #131417;
+  --surface-terminal-inner: #1E2025;
+  --text-pure-white: #FFFFFF;
+  --text-light-gray: #D1D5DB;
+  --text-dim-gray: #9CA3AF;
+  --text-terminal-headline: #F9FAFB;
 }

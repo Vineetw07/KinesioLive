@@ -90,6 +90,8 @@ export interface KineRepPayload extends Envelope {
   depth: "shallow" | "good" | "deep";
   durMs: number;
   tempo: "fast" | "controlled" | "slow";
+  formScore?: number;
+  formRating?: "excellent" | "good" | "needs_work";
 }
 
 export interface KineAlertPayload extends Envelope {
@@ -144,21 +146,42 @@ In unmirrored pixel camera space $(X = x \cdot W, Y = y \cdot H)$:
    *Result:* Inward collapse is always **positive (+)**.
 4. **Trigger Threshold:** $\text{valgusDevPct} > +8.0\%$ for $\ge 3$ consecutive frames ($\approx 200$ ms) during descent/bottom with a 4.0s cooldown per side.
 
-### 3. Rep Counter State Machine (Calibrated Depth Ratio)
+### 3. Rep Counter State Machine & Rep Form Scoring
 Normalized hip descent from standing baseline:
 $$\text{depthRatio} = \frac{Y_{\text{hip}}(t) - Y_{\text{hip}}(\text{standing})}{Y_{\text{knee}}(\text{standing}) - Y_{\text{hip}}(\text{standing})}$$
 - **Descent:** $\text{depthRatio} > 0.25$ or $\theta_{\text{knee}} < 150^\circ$
 - **Bottom:** $\text{depthRatio} > 0.85$ or $\theta_{\text{knee}} < 100^\circ$
 - **Ascent:** $\text{depthRatio}$ decreasing and $\theta_{\text{knee}} > 110^\circ$
 - **Rep Validated:** Re-enters standing ($\theta_{\text{knee}} > 160^\circ$) if minimum depth reached $< 110^\circ$ and rep duration $\ge 800$ ms.
+- **Form Scoring ($0..100$):**
+  - Depth Score ($0..40$ pts): Peak depth penalizes shallow squats, awards maximum points for parallel/deep ranges.
+  - Valgus Penalty (deducts up to $35$ pts): Scaled by peak medial knee deviation.
+  - Tempo Score ($0..25$ pts): Evaluates rep duration ($1.8\text{s} - 4.0\text{s}$ controlled target).
+  - Rating: $\ge 85 \to$ `"excellent"`, $\ge 65 \to$ `"good"`, $< 65 \to$ `"needs_work"`.
+
+### 4. Adaptive Signal Processing (1-Euro Filter)
+To eliminate high-frequency video landmark jitter while preserving low-latency trajectory transitions:
+- Low-speed smoothing cutoff: $f_c^{\text{min}} = 1.0\text{ Hz}$.
+- Speed coefficient: $\beta = 0.007$.
+- Filter dynamically adapts smoothing window: steady pose receives aggressive jitter suppression while rapid descent/ascent avoids lag.
+
+### 5. Subpixel Canvas Overlay Alignment (`canvasOverlayAligner.ts`)
+- Letterbox & pillarbox compensation computes exact active video viewport offsets $(v_x, v_y, v_w, v_h)$.
+- Mirrored coordinate reflection ($x \to 1 - x$) preserves natural user feedback without CSS transform distortion.
+- Full anatomical connectivity renders clavicle midline, torso boundary, sternum, and upper/lower extremities aligned 1:1 on patient video feed.
+
+### 6. Dual-Transport Telemetry Sync (`telemetryTransport.ts`)
+- **Local Channel:** `BroadcastChannel("kinesiolive-telemetry")` for instantaneous (< 1ms) zero-latency UI updates during local testing or dual-tab simulations.
+- **Remote Channel:** `CometChat.sendTransientMessage` throttled to 10 Hz via token bucket for cross-network WebRTC synchronization.
 
 ---
 
 ## 4. Backend REST Endpoints & Lifecycle
 
 ### Client URL Routing & Role Isolation
-- **Clinician URL:** `https://<domain>/?role=clinician&session=<sessionId>`
-- **Patient URL:** `https://<domain>/?role=patient&session=<sessionId>`
+- **Landing Page & Role Selection:** `https://<domain>/` with animated role portals and room code creator.
+- **Clinician Lobby & Studio:** `https://<domain>/?role=clinician&session=<sessionId>`
+- **Patient Lobby & Studio:** `https://<domain>/?role=patient&session=<sessionId>`
 - **Clinician Link Sharing:** Clinician UI renders an instantaneous "Copy Patient Invite Link" button copying the exact patient URL with matching `sessionId`.
 
 ### API Endpoints
@@ -171,6 +194,7 @@ $$\text{depthRatio} = \frac{Y_{\text{hip}}(t) - Y_{\text{hip}}(\text{standing})}
     4. Generates Auth Tokens via `POST /v3/users/{uid}/auth_tokens` using server REST API Key.
     5. Returns `{ sessionId, authToken, uid, appId, region }` to client.
 - `GET /api/health`: Health probe validating CometChat REST reachability and node process uptime.
+
 
 ---
 

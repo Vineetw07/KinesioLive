@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "clean:src": "node -e \"const fs=require('fs'), path=require('path'); const s=path.resolve('src'); if(fs.existsSync(s)){fs.readdirSync(s).filter(f=>f.endsWith('.js')||f.endsWith('.d.ts')).forEach(f=>fs.unlinkSync(path.join(s,f)));}\"",
+    "prebuild": "pnpm run clean:src",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

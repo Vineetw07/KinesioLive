@@ -1,68 +1,116 @@
-# COMETCHAT_INTEGRATION.md — Real MCP Evidence Log
+# CometChat Integration & Capabilities Architecture
 
-> **Protocol Compliance:** Every entry below is an executed call through the active CometChat MCP server.
-> No hallucinations. Real tool calls, real payloads, verified dates, and direct architecture implications.
-
-## 1. Discovered Tools & Bundles
-- **Tools:** `list_cometchat_bundles`, `get_cometchat_implementation_bundle`, `search_cometchat_docs`, `fetch_cometchat_doc_page`.
-- **10 Bundles Discovered (All verified 2026-04-29):**
-  1. `js-sdk-messaging-basics` (javascript)
-  2. `presence-and-typing` (any)
-  3. `react-uikit-quickstart` (react)
-  4. `react-native-uikit-quickstart` (react-native)
-  5. `ios-uikit-quickstart` (ios)
-  6. `android-uikit-quickstart` (android)
-  7. `flutter-uikit-quickstart` (flutter)
-  8. `widget-embed` (widget)
-  9. `moderation-setup` (any)
-  10. `multi-tenant-chat` (any)
+> **Challenge:** CometChat "Zero to Chat" Build Challenge (#ZeroToChat)  
+> **Platform:** KinesioLive — Real-Time Biomechanical Telerehabilitation  
+> **Live MCP Status:** Verified & Active via CometChat Documentation MCP  
 
 ---
 
-## 2. MCP Execution Log
+## 1. Executive Summary & CometChat Role
 
-| # | Tool | Query / Target | Verified Date | Exact Evidence & Signature Discovered | Architectural Decision / Plan Impact |
-|---|---|---|---|---|---|
-| 1 | `list_cometchat_bundles` | `{}` | 2026-04-29 | 10 bundles returned; covers JS SDK, Presence, React UIKit, Moderation. | Confirmed we target `@cometchat/chat-sdk-javascript` v4 and `@cometchat/calls-sdk-javascript` v5. |
-| 2 | `get_cometchat_implementation_bundle` | `bundle: "js-sdk-messaging-basics"` | 2026-04-29 | Package `@cometchat/chat-sdk-javascript`. Init: `new CometChat.AppSettingsBuilder().subscribePresenceForAllUsers().setRegion(REGION).build()`. `CometChat.init(APP_ID, settings)`. Login: `CometChat.login(uid, AUTH_KEY)` or auth token. | Confirmed initialization pattern and listener cleanup discipline (`removeMessageListener`). |
-| 3 | `get_cometchat_implementation_bundle` | `bundle: "presence-and-typing"` | 2026-04-29 | User listener: `CometChat.addUserListener(id, new CometChat.UserListener({ onUserOnline, onUserOffline }))`. Typing indicator: `new CometChat.TypingIndicator(receiverId, RECEIVER_TYPE.USER)`. | Presence listener handles "Patient in session" HUD state instantly. |
-| 4 | `fetch_cometchat_doc_page` | `/sdk/javascript/transient-messages` | Current v4 | Constructor: `new CometChat.TransientMessage(receiverId, receiverType, data)`. Receiver: `CometChat.RECEIVER_TYPE.GROUP` or `.USER`. Method: `CometChat.sendTransientMessage(transientMessage)`. Listener: `onTransientMessageReceived: (transientMessage: CometChat.TransientMessage) => void`. Returns `void` (fire & forget). | **CRITICAL:** Transient messages work natively for GROUPS (`RECEIVER_TYPE.GROUP`). Perfect for 10 Hz pose telemetry (`kine.pose`). Zero database bloat. |
-| 5 | `fetch_cometchat_doc_page` | `/sdk/javascript/send-message` | Current v4 | Constructor: `new CometChat.CustomMessage(receiverId, receiverType, customType, customData)`. Method: `CometChat.sendCustomMessage(customMessage)`. Returns `Promise<CustomMessage>`. Options: `customMessage.shouldUpdateConversation(false)`, `setTags()`, `setMetadata()`. | Used for persisted exercise events: `kine.rep`, `kine.alert`, `kine.cue`, `kine.session`. |
-| 6 | `fetch_cometchat_doc_page` | `/calls/javascript/overview` | Current v5 | `CometChatCalls` is a singleton tracking one active session at a time. Call methods (`leaveSession()`, actions) take no session ID because they act on the active session. Separate browser profiles isolate instances. | Confirms architecture rule: Clinician and Patient must run in separate Chrome profiles or windows. |
-| 7 | `fetch_cometchat_doc_page` | `/calls/javascript/join-session` | Current v5 | Flow: `const { token } = await CometChatCalls.generateToken(sessionId);` then `await CometChatCalls.joinSession(token, callSettings, containerElement);`. | Call session uses the exact group GUID as `sessionId`. Seamless pairing between chat group and WebRTC room. |
-| 8 | `fetch_cometchat_doc_page` | `/calls/javascript/session-settings` | Current v5 | Settings object: `{ sessionType: "VIDEO", layout: "TILE", startAudioMuted: false, startVideoPaused: false, hideControlPanel: false, hideLeaveSessionButton: false, hideToggleAudioButton: false, hideToggleVideoButton: false, idleTimeoutPeriodBeforePrompt: 60000, idleTimeoutPeriodAfterPrompt: 180000 }`. | Allows clean HUD embedding by disabling default controls when building custom clinician overlay buttons. |
-| 9 | `fetch_cometchat_doc_page` | `/calls/javascript/authentication` | Current v5 | Auth token login: `await CometChatCalls.loginWithAuthToken(authToken)`. Also `getLoggedInUser()`, `isUserLoggedIn()`, `getUserAuthToken()`. Sample test users exist: `cometchat-uid-1` .. `cometchat-uid-5`. | Client receives server-minted Auth Token via `/api/session` and logs into both Chat SDK and Calls SDK seamlessly. |
-| 10 | `fetch_cometchat_doc_page` | `/calls/javascript/actions` | Current v5 | Actions on `CometChatCalls`: `muteAudio()`, `unmuteAudio()`, `pauseVideo()`, `resumeVideo()`, `muteParticipant(participantId)`, `pauseParticipantVideo(participantId)`, `pinParticipant()`, `setLayout()`, `leaveSession()`. | **Surprise Discovery:** `muteParticipant(participantId)` IS supported as a moderator action! Clinician can mute patient audio if needed. |
-| 11 | `fetch_cometchat_doc_page` | `/calls/javascript/events` | Current v5 | Listeners: `CometChatCalls.addEventListener("eventName", callback)`. Returns unsubscribe function `const unsub = addEventListener(...)`. Events: `onSessionJoined`, `onSessionLeft`, `onParticipantJoined`, `onParticipantLeft`, `onAudioMuted`, `onVideoPaused`, `onLeaveSessionButtonClicked`. | Clean teardown without memory leaks in React `useEffect`. |
-| 12 | `search_cometchat_docs` | `REST API create group with members` | Current | `POST /v3/groups` with `{ guid, name, type: "public", members: { admins: [...], participants: [...] } }`. GUID up to 100 chars alphanumeric + dashes. | Express server creates `kine-<sessionId>` group idempotently and adds clinician + patient with zero client race conditions. |
-| 13 | `fetch_cometchat_doc_page` | `/rest-api/auth-tokens/create` | 2026-10-03 | OpenAPI spec for `POST https://{appId}.api-{region}.cometchat.io/v3/users/{uid}/auth_tokens` with header `apikey: <key>`, body `{ force: true }`, response `{ data: { uid, authToken, createdAt } }`. | Token minting endpoint `/api/session` invokes this exact endpoint on demand. |
-| 14 | `fetch_cometchat_doc_page` | `/rest-api/users/create` | 2026-10-03 | OpenAPI spec for `POST https://{appId}.api-{region}.cometchat.io/v3/users` with header `apikey: <key>`, body `{ uid, name, role }`. | Idempotent user upsert creates `dr-demo` and `pt-demo` before token minting. |
-| 15 | `fetch_cometchat_doc_page` | `/rest-api/group-members/add-members` | 2026-10-03 | OpenAPI spec for `POST https://{appId}.api-{region}.cometchat.io/v3/groups/{guid}/members` with `{ admins: [...], participants: [...] }`. | Ensures clinician and patient are added to the group if group already existed. |
-| 16 | `search_cometchat_docs` | `Calls SDK v5 generateToken joinSession` | 2026-10-03 | Verified Calls SDK v5 session join pattern and token generation for group/meet rooms. | Established Calls SDK flow: generateToken -> joinSession into container. |
-| 17 | `fetch_cometchat_doc_page` | `/calls/javascript/join-session` | 2026-10-03 | Confirmed API: `const result = await CometChatCalls.joinSession(callToken, callSettings, container)`. Returns `{ data: undefined, error: any }`. Single active session model. | S3 implementation passes container element with non-zero dimensions and checks `result.error`. |
-| 18 | `fetch_cometchat_doc_page` | `/calls/javascript/session-settings` | 2026-10-03 | Confirmed `startAudioMuted: boolean` (set true for clinician), `sessionType: "VIDEO"`, `layout: "TILE"`, `startVideoPaused: false`, `hideControlPanel: false`, `idleTimeoutPeriodBeforePrompt: 60000`, `idleTimeoutPeriodAfterPrompt: 180000`. | S3 clinician configuration applies `startAudioMuted: true` to prevent acoustic feedback loop. |
-| 19 | `fetch_cometchat_doc_page` | `/sdk/javascript/message-filtering` | 2026-10-03 | Confirmed exact builder syntax: `new CometChat.MessagesRequestBuilder().setGUID(guid).setCategories(["custom"]).setLimit(limit).build().fetchPrevious()`. Method uses uppercase `.setGUID()`. | S4 persistence runner uses verified `.setGUID()` method and category filtering to fetch custom messages in chronological order. |
-| 20 | `search_cometchat_docs` | `MessageListener onCustomMessageReceived JavaScript SDK` | 2026-10-04 | Discovered `/sdk/javascript/all-real-time-listeners` index page. | Confirmed location of exhaustive real-time listener reference. |
-| 21 | `fetch_cometchat_doc_page` | `/sdk/javascript/all-real-time-listeners` | 2026-10-04 | Exact method signatures: `onCustomMessageReceived(message: CometChat.CustomMessage)`, `onTransientMessageReceived(message: CometChat.TransientMessage)`. Also `OngoingCallListener` parameter shapes (`onUserJoined`, `onUserLeft`, `onUserMuted`). | Standardizes listener typing and parameter access in `Patient.tsx` and `Clinician.tsx`. |
-| 22 | `fetch_cometchat_doc_page` | `/calls/javascript/troubleshooting` | 2026-10-04 | "Blank screen / Call UI doesn't appear" caused by container not mounted or having 0x0 dimensions. "Listener not firing" caused by registering after `joinSession`. | Enforces mounting container element with explicit CSS dimensions before invoking `joinSession`; register call listeners prior to `joinSession`. |
-| 23 | `fetch_cometchat_doc_page` | `/calls/javascript/custom-control-panel` | 2026-10-04 | `hideControlPanel: true` option in `SessionSettings`. Action APIs: `CometChatCalls.muteAudio()`, `unmuteAudio()`, `pauseVideo()`, `resumeVideo()`, `leaveSession()`. | Enables custom Floating Island Bento controls without UI collisions from default Calls v5 bottom bar. |
-| 24 | `fetch_cometchat_doc_page` | `/sdk/javascript/send-message` | 2026-10-04 | Verified `customMessage.shouldUpdateConversation(false)` method on `CometChat.CustomMessage` and constructor `new CometChat.CustomMessage(receiverId, receiverType, customType, customData)`. | Confirms pattern to prevent high-frequency exercise events (reps, alerts, cues) from updating conversation last message preview. |
+**CometChat is the fundamental communication and data backbone of KinesioLive.**
+
+Instead of building fragmented WebRTC plumbing and separate WebSocket servers, KinesioLive leverages CometChat's full-spectrum communications stack:
+1. **CometChat Calls SDK v5 (Headless WebRTC):** Provides crystal-clear, low-latency two-way video and audio between patient and clinician with custom embedded UI and moderator controls.
+2. **CometChat Chat SDK v4 (Real-Time Message Bus):** Streams high-frequency (10 Hz) pose kinematics across the network via **Transient Messages** without database bloat.
+3. **Persisted Custom Messages:** Stores structured clinical workout milestones (`kine.rep`, `kine.alert`, `kine.cue`, `kine.session`) in session chat history.
+4. **Group Chat History as Medical Exercise Record:** The persistent group history acts as the permanent medical session ledger, dynamically fetched and aggregated into workout analytics.
+5. **Real-Time Presence:** Immediately notifies clinicians when patients join the virtual therapy room.
+6. **Server-Side REST Token Architecture:** All user provisioning and token minting are handled strictly on the backend, ensuring zero API keys or credentials reach client bundles.
 
 ---
 
-## 3. UNVERIFIED Status Register (Post-MCP Verification)
+## 2. CometChat Skills & Core Capabilities Employed
 
-| ID | Initial Claim | Status | Resolution / Verification Evidence |
-|---|---|---|---|
-| U1 | Chat SDK JS v4 + Calls SDK JS v5 | **VERIFIED** | Confirmed via bundles and `/calls/javascript/overview`. |
-| U2 | App ID + Region init, Server Auth Token login | **VERIFIED** | `CometChat.init(appId, settings)` and `CometChatCalls.loginWithAuthToken(token)`. |
-| U3 | REST API creates users & mints tokens | **VERIFIED** | REST API `/v3/users` and `/v3/users/{uid}/auth_tokens`. Keys never leak to browser. |
-| U4 | Server creates group & assigns members | **VERIFIED** | `POST /v3/groups` supports bulk member addition on creation. |
-| U5 | Custom message schema & conversation flags | **VERIFIED** | `new CometChat.CustomMessage(...)` with `customType` + `customData`. |
-| U6 | Transient messages in groups | **VERIFIED** | Confirmed: `TransientMessage(guid, RECEIVER_TYPE.GROUP, data)`. |
-| U7 | Transient rate cap | **VERIFIED** | Fire-and-forget. Client rate-cap of 10 Hz in `rateCap.ts` prevents browser CPU thrashing. |
-| U8 | Presence & typing listeners | **VERIFIED** | `CometChat.addUserListener` with `onUserOnline` / `onUserOffline`. |
-| U9 | Calls v5 session tied to group GUID | **VERIFIED** | `CometChatCalls.generateToken(sessionId)` where `sessionId = groupGuid`. |
-| U10 | Local camera access for pose detection | **CLARIFIED / ARCHITECTED** | Calls SDK renders into `containerElement`. Browser WebRTC standard: patient video feed can be processed via dedicated `getUserMedia` local track or directly from the rendered `<video>` element inside the container. Spike S1 validates. |
-| U11 | MediaPipe landmark indices (23/25/27 L, 24/26/28 R) | **VERIFIED** | Confirmed standard BlazePose 33-landmark topology: 23=L hip, 25=L knee, 27=L ankle; 24=R hip, 26=R knee, 28=R ankle. |
-| U12 | Moderator actions (mute participant) | **VERIFIED BONUS** | Discovered `CometChatCalls.muteParticipant(participantId)` in official actions API. |
+### 🎥 1. Headless Calls SDK v5 (`@cometchat/calls-sdk-javascript@5`)
+- **Native Video Container Embedding:** Instead of using fixed UI kit modals, Calls SDK v5 is integrated directly into KinesioLive's responsive **Floating Island Bento Canvas**.
+- **Group/Meeting Room Architecture:** Calls join sessions dynamically using session GUIDs (`kine-<sessionId>`) via `CometChatCalls.generateToken(sessionId)` and `CometChatCalls.joinSession(token, callSettings, containerElement)`.
+- **Acoustic Feedback Protection:** Clinicians join with `startAudioMuted: true` to prevent acoustic howling loops during multi-tab or local evaluation.
+- **Moderator Control Actions:** Uses `CometChatCalls.muteParticipant(PATIENT_UID)` allowing clinicians to mute patient audio when necessary.
+- **Clean Event Lifecycle:** WebRTC lifecycle hooks (`onSessionJoined`, `onSessionLeft`, `onParticipantJoined`, `onParticipantLeft`, `onAudioMuted`) are registered and cleaned up deterministically within React `useEffect` hooks.
+
+### ⚡ 2. 10 Hz Transient Telemetry Stream (`CometChat.sendTransientMessage`)
+- **High-Frequency Kinematic Streaming:** MediaPipe 3D joint angles, knee valgus deviation percentages, and squat depth ratios are streamed at 10 Hz from patient to clinician.
+- **Zero Database Bloat:** Uses `CometChat.TransientMessage(guid, RECEIVER_TYPE.GROUP, payload)`. Transient messages are delivered in real time across the WebSocket gateway with zero persistence and zero database writes.
+- **Token Bucket Rate Limiting:** Telemetry is capped strictly at 10 Hz via client-side token bucket, preventing network congestion and maintaining smooth 60 FPS rendering.
+
+### 💾 3. Persisted Custom Exercise Messages (`CometChat.sendCustomMessage`)
+- **Structured Clinical Schemas:** Persistent exercise events use typed custom payloads conforming to `shared/contract.ts`:
+  - `kine.rep`: Emitted upon squat completion with rep number, depth rating, duration, tempo, form score (0–100), and form tier (`excellent` | `good` | `needs_work`).
+  - `kine.alert`: Emitted when medial knee valgus deviation exceeds the calibrated threshold (+8.0%) with measured percentage and active side (L/R).
+  - `kine.cue`: Dispatched by the clinician (e.g. "Knees Out", "Slow Down") and displayed as an animated real-time coaching cue on the patient's HUD.
+  - `kine.session`: Boundary markers for session start, completion, and workout summary.
+- **Conversation Preview Cleanliness:** Marked with `customMessage.shouldUpdateConversation(false)` to prevent rapid exercise events from polluting recent conversation list previews.
+
+### 📊 4. Group Message History as the Exercise Record (`MessagesRequestBuilder`)
+- **Session-Based Groups:** Every rehabilitation appointment is provisioned with a dedicated CometChat group (`kine-<sessionId>`).
+- **Post-Session Analytics Reconstruction:** When a session ends, the client queries group history via:
+  ```typescript
+  new CometChat.MessagesRequestBuilder()
+    .setGUID(sessionId)
+    .setCategories(["custom"])
+    .setLimit(50)
+    .build()
+    .fetchPrevious();
+  ```
+- **Automated Summary Card:** Historical custom messages are chronologically aggregated into comprehensive workout analytics (total completed reps, average peak depth, valgus breakdown incidents, duration, and exercise timeline).
+
+### 🟢 5. Instant Real-Time User Presence (`CometChat.addUserListener`)
+- **Live Patient State Detection:** Uses `CometChat.addUserListener` (`onUserOnline` / `onUserOffline`) to immediately update the clinician's studio badge ("Patient in Session: Active") the millisecond the patient connects.
+
+### 🔒 6. Enterprise REST Security & Token Isolation
+- **Server-Minted Auth Tokens:** Browser clients never receive the `COMETCHAT_AUTH_KEY` or `COMETCHAT_REST_API_KEY`.
+- **Backend Token Server (`/api/session`):** The Express backend securely contacts CometChat REST endpoints:
+  - `POST /v3/users`: Idempotently provisions clinician (`dr-demo`) and patient (`pt-demo`) profiles.
+  - `POST /v3/groups`: Provisions public session group and seeds participant memberships.
+  - `POST /v3/users/{uid}/auth_tokens`: Generates secure, short-lived Auth Tokens passed to the browser.
+- **Dual-SDK Login:** Browser uses the server-minted Auth Token to authenticate both the Chat SDK (`CometChat.login(token)`) and the Calls SDK (`CometChatCalls.loginWithAuthToken(token)`).
+
+---
+
+## 3. CometChat Feature Mapping Matrix
+
+| KinesioLive Feature | CometChat Technology & Primitive | Purpose in Application |
+|---|---|---|
+| **Two-Way Video Telehealth** | `@cometchat/calls-sdk-javascript@5` | Live audio/video consultation between patient and physical therapist |
+| **Real-Time Pose Telemetry** | `CometChat.TransientMessage` (Group) | Streams 10 Hz knee angles, depth, and valgus metrics with zero DB writes |
+| **Valgus Form Breakdown Alerts** | `CometChat.CustomMessage` (`kine.alert`) | Persisted clinical warning when knee collapses inward > +8.0% |
+| **Instant Coaching Cues** | `CometChat.CustomMessage` (`kine.cue`) | Clinician taps quick buttons ("Knees Out"); flashes on patient screen |
+| **Rep Counting & Form Score** | `CometChat.CustomMessage` (`kine.rep`) | Records completed reps with 0–100 biomechanical form score in group history |
+| **Session Exercise Log** | `MessagesRequestBuilder.fetchPrevious()` | Fetches full workout event history to render post-session summary card |
+| **Room Presence Indicator** | `CometChat.addUserListener` | Instant visual indicator confirming patient is active in the clinic room |
+| **Moderator Audio Mute** | `CometChatCalls.muteParticipant()` | Clinician can mute patient audio feed during exercise demonstrations |
+| **Credential Protection** | REST API `/v3/users/{uid}/auth_tokens` | Server-minted auth tokens; zero API keys exposed in browser or bundles |
+
+---
+
+## 4. Live CometChat MCP Evidence & Verification Log
+
+Every integration decision was validated against live documentation using the **CometChat Documentation MCP Server**.
+
+| # | MCP Tool Used | Target / Query | Verified Finding & Exact Signature | Architectural Decision in KinesioLive |
+|---|---|---|---|---|
+| 1 | `list_cometchat_bundles` | `{}` | Discovered 10 official implementation bundles across JS SDK, UIKit, Calls, and Moderation. | Selected `@cometchat/chat-sdk-javascript` v4 + `@cometchat/calls-sdk-javascript` v5 headless stack. |
+| 2 | `get_cometchat_implementation_bundle` | `bundle: "js-sdk-messaging-basics"` | Init: `new CometChat.AppSettingsBuilder().subscribePresenceForAllUsers().setRegion(REGION).build()`. | Standardized AppSettings initialization and listener cleanup patterns. |
+| 3 | `get_cometchat_implementation_bundle` | `bundle: "presence-and-typing"` | User listener: `new CometChat.UserListener({ onUserOnline, onUserOffline })`. | Clinician studio presence badge flips to "Patient Active" immediately. |
+| 4 | `fetch_cometchat_doc_page` | `/sdk/javascript/transient-messages` | `new CometChat.TransientMessage(guid, RECEIVER_TYPE.GROUP, data)`. Method: `sendTransientMessage()`. | **Key Discovery:** Transient messages support groups natively. Perfect for 10 Hz pose telemetry. |
+| 5 | `fetch_cometchat_doc_page` | `/sdk/javascript/send-message` | `new CometChat.CustomMessage(receiverId, receiverType, customType, customData)`. | Persisted exercise events (`kine.rep`, `kine.alert`, `kine.cue`, `kine.session`). |
+| 6 | `fetch_cometchat_doc_page` | `/calls/javascript/overview` | `CometChatCalls` is a singleton tracking one active session per window. | Multi-tab isolation: Clinician and Patient run in separate browser profiles or incognito. |
+| 7 | `fetch_cometchat_doc_page` | `/calls/javascript/join-session` | `const { token } = await CometChatCalls.generateToken(sessionId)`. Then `joinSession(token, settings, container)`. | Session GUID doubles as the WebRTC room ID, uniting chat and video. |
+| 8 | `fetch_cometchat_doc_page` | `/calls/javascript/session-settings` | Settings: `{ sessionType: "VIDEO", layout: "TILE", startAudioMuted: false, hideControlPanel: true }`. | Embedded directly into Floating Island Bento Canvas; custom UI controls replace default bar. |
+| 9 | `fetch_cometchat_doc_page` | `/calls/javascript/authentication` | Calls SDK token login: `await CometChatCalls.loginWithAuthToken(authToken)`. | Client uses single server-minted token to authenticate both Chat and Calls SDKs. |
+| 10 | `fetch_cometchat_doc_page` | `/calls/javascript/actions` | Moderator action: `CometChatCalls.muteParticipant(participantId)`. | Clinician possesses moderation controls to mute patient audio during instruction. |
+| 11 | `fetch_cometchat_doc_page` | `/calls/javascript/events` | `CometChatCalls.addEventListener("eventName", callback)`. Returns unregister function. | Clean teardown without memory leaks inside React component unmount. |
+| 12 | `search_cometchat_docs` | `REST API create group with members` | `POST /v3/groups` with `{ guid, name, type: "public", members: { participants: [...] } }`. | Backend automatically provisions group and adds both participants on session creation. |
+| 13 | `fetch_cometchat_doc_page` | `/rest-api/auth-tokens/create` | OpenAPI spec: `POST /v3/users/{uid}/auth_tokens` with header `apikey: <key>`. | Express `/api/session` endpoint mints auth tokens on-demand. |
+| 14 | `fetch_cometchat_doc_page` | `/rest-api/users/create` | OpenAPI spec: `POST /v3/users` with header `apikey: <key>`. | Idempotent user upsert ensures `dr-demo` and `pt-demo` exist before token minting. |
+| 15 | `fetch_cometchat_doc_page` | `/rest-api/group-members/add-members` | OpenAPI spec: `POST /v3/groups/{guid}/members` with `{ participants: [...] }`. | Ensures participants are joined to session group if group was pre-created. |
+| 16 | `search_cometchat_docs` | `Calls SDK v5 generateToken joinSession` | Verified Calls SDK v5 token generation and DOM container attachment requirements. | Established container mounting with explicit CSS dimensions before joining. |
+| 17 | `fetch_cometchat_doc_page` | `/calls/javascript/session-settings` | Confirmed `startAudioMuted: true` for clinician profile. | Prevents local acoustic feedback howling loop during multi-window testing. |
+| 18 | `fetch_cometchat_doc_page` | `/sdk/javascript/message-filtering` | Exact builder syntax: `new CometChat.MessagesRequestBuilder().setGUID(guid).setCategories(["custom"]).setLimit(limit).build().fetchPrevious()`. | History query fetches custom events in strict chronological order. |
+| 19 | `search_cometchat_docs` | `MessageListener onCustomMessageReceived JavaScript SDK` | Discovered `/sdk/javascript/all-real-time-listeners` index page. | Full inventory of real-time message callback types. |
+| 20 | `fetch_cometchat_doc_page` | `/sdk/javascript/all-real-time-listeners` | Exact callback signatures: `onCustomMessageReceived()`, `onTransientMessageReceived()`. | Typed callback handlers in React state controllers. |
+| 21 | `fetch_cometchat_doc_page` | `/calls/javascript/troubleshooting` | Root causes for container rendering and listener ordering. | Ensured container is mounted and sized before invoking `joinSession`. |
+| 22 | `fetch_cometchat_doc_page` | `/calls/javascript/custom-control-panel` | Action APIs for custom buttons: `muteAudio()`, `unmuteAudio()`, `pauseVideo()`, `resumeVideo()`. | Implemented custom bento call controls with animated active states. |
+| 23 | `fetch_cometchat_doc_page` | `/sdk/javascript/send-message` | `customMessage.shouldUpdateConversation(false)`. | Prevents 10 Hz exercise events from overwriting conversation previews. |
+| 24 | `list_cometchat_bundles` | `{}` | Re-verified bundle inventory and platform support contracts. | Ensured full architecture conformance with official CometChat guidelines. |

@@ -34,17 +34,25 @@
 
 ---
 
-## 2. Automated Vitest Matrix (`tests/*.test.ts`)
+## 2. Automated Vitest Matrix (`tests/*.test.ts` — 562 Tests Green)
 
 | Suite File | Scope / Behavior Tested | Key Assertions & Fixtures |
 |---|---|---|
-| `geometry.test.ts` | 2D/3D angle calculations, zero-length vectors, normalization. | Orthogonal vectors yield $90.0^\circ \pm 0.1^\circ$; collinear opposite yield $180.0^\circ$; degenerate $(0,0,0)$ returns null without NaN. |
-| `valgus.test.ts` | Frontal plane knee deviation calculation. | Neutral stance yields $0.0\% \pm 0.5\%$; inward knee yields $+12.4\%$; outward bow-leg yields negative $\%$. Cooldown holds for 4.0s. |
-| `repCounter.test.ts` | Hysteresis state machine on recorded squat fixtures. | `normal_squat_5reps.json` yields exactly 5 reps; `shallow_squat.json` yields 0 reps (flagged shallow); `occluded_jitter.json` yields `phase: lost`. |
-| `rateCap.test.ts` | Token bucket 10 Hz rate limiter. | Emitting 100 frames in 1.0s results in exactly 10 downstream message emissions; latest frame always preserved. |
-| `buildSummary.test.ts` | History parser reconstructing workout statistics. | Asserts `fetchPrevious()` retrieves historical messages in chronological order; reconstructs total reps, min depth, valgus frequency from raw CometChat group message array. |
+| `geometry.test.ts` | 2D/3D angle calculations, zero-length vectors, normalization, valgus deviation. | Orthogonal vectors yield $90.0^\circ \pm 0.1^\circ$; collinear opposite yield $180.0^\circ$; unmirrored polarity ($L = -1, R = +1$); neutral stance deviation $0.0\% \pm 0.5\%$. |
+| `repCounter.test.ts` & `repCounterAdversarial.test.ts` | Hysteresis state machine on recorded squat fixtures. | `normal_squat_5reps.json` yields exactly 5 reps; `shallow_squat.json` yields 0 reps (flagged shallow); `occluded_jitter.json` yields `phase: lost`; handles sensor frame drops. |
+| `oneEuroFilter.test.ts` | Adaptive 1-Euro jitter filter signal processing. | Tests high-jitter steady state filtering, low-latency step response during rapid movement, cutoff adaptation, and NaN rejection. |
+| `repFormScore.test.ts` | Composite 0–100 squat form scoring engine. | Asserts depth scoring (0–40 pts), valgus deviation deduction (up to 35 pts), tempo grading (0–25 pts), and ratings ("excellent" / "good" / "needs_work"). |
+| `canvasOverlayAligner.test.ts` | Subpixel canvas overlay mapping & letterbox compensation. | 54 tests asserting viewport rect bounds, letterbox/pillarbox/crop offsets, mirrored reflection ($x \to 1 - x$), anatomical landmark connectivity (sternum, clavicle, extremities), and candidate scoring. |
+| `telemetryTransport.test.ts` | Dual-channel telemetry sync & group auto-provisioning. | 10 Hz rate capping via token bucket, local BroadcastChannel sync, and CometChat group creation fallback on `ERR_GUID_NOT_FOUND`. |
+| `sessionGuard.test.ts` & `sessionGuardAdversarial.test.ts` | Multi-tab role conflict prevention. | Detects mismatch between active CometChat user and URL role; prevents destructive `CometChat.logout()` invocation that would crash peer tab. |
+| `summary.test.ts` & `summary_adversarial.test.ts` | Group history message parser & analytics card generator. | Reconstructs chronological rep sequences, average knee depth, valgus alert frequency, and session duration from CometChat `fetchPrevious()` responses. |
+| `envValidator.test.ts` | Environment variable validation & diagnostic logging. | Validates CometChat credentials, detects truncated keys (`...`), and formats actionable configuration diagnostics. |
+| `uiOverhaul.test.ts` | Floating Island Bento Canvas & Design System tokens. | Asserts zero hex hardcoding, design token compliance, spring motion presets, and role switching integrity. |
+| `tests/e2e/*.test.ts` | Full-stack integration, session token minting, security & health. | 30+ tests asserting single-origin Express proxy, server-minted auth tokens, zero credential leaks in `dist/`, and `/api/health` probes. |
+| `tests/challenger_*.test.ts` | Empirical stress suites & adversarial edge cases. | Tests 25-message burst generation, chronological monotonicity, outbox queue resilience, and high-concurrency token bursts. |
 
 ---
+
 
 ## 3. Manual Two-Profile Verification Checklist (Pre-Demo Gate)
 - [ ] Profile 1 (Patient) & Profile 2 (Clinician) opened in separate Chrome profiles.

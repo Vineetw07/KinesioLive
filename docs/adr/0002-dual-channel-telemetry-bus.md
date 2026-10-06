@@ -1,0 +1,3 @@
+# Dual-Channel Telemetry Bus: Transient Streaming and Persisted Milestones
+
+Streaming full 30 FPS pose telemetry into persistent chat history exhausts message quotas, floods storage with ephemeral noise, and breaks historical summary reconstruction. We decided to partition session communication into two distinct channels: a 10 Hz rate-capped transient bus (`sendTransientMessage`) for live HUD rendering, and persistent custom messages (`sendCustomMessage`) exclusively for discrete clinical milestones (`kine.rep`, `kine.alert`, `kine.cue`, and `kine.session`). This ensures real-time responsiveness without storage exhaustion while keeping the persistent log clean and queryable for post-session analytics.

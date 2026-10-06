@@ -32,16 +32,22 @@
 
 ### ✅ In-Scope (MVP)
 1. **Single Exercise Specialization:** Bodyweight squat.
-2. **Patient View:** Live CometChat video call, local canvas skeleton overlay, rep counter, and animated coaching cue toasts.
-3. **Clinician View:** Patient video feed, live biomechanics telemetry HUD (angles, depth), automated knee valgus alert badges, quick-cue trigger buttons, and presence badge.
-4. **CometChat Core Integration:**
+2. **Landing Page & Role Selection:** Immersive dark hero portal (`LandingPage.tsx`) featuring 3D anatomical backdrop (`AnatomicalSkeletonBackdrop3D.tsx`), live session code entry, and role modal (`AuthModal.tsx`).
+3. **Pre-Session Lobbies:**
+   - **Clinician Lobby (`ClinicianLobby.tsx`):** Session GUID generator, invite link cloner, microphone/camera health preview, and instant studio entry.
+   - **Patient Lobby (`PatientLobby.tsx`):** Real-time MediaPipe camera preflight, interactive kinematic mannequin (`KinematicMannequin3D.tsx`), standing posture baseline checklist.
+4. **Patient Studio (`Patient.tsx`):** Live CometChat video call, subpixel canvas skeleton overlay (`canvasOverlayAligner.ts`), rep counter, 1-Euro adaptive jitter filter, and animated coaching cue toasts.
+5. **Clinician Studio (`Clinician.tsx`):** Patient video feed, live biomechanics telemetry HUD (angles, depth), automated knee valgus alert badges, quick-cue trigger buttons, presence badge, and audio moderation mute.
+6. **CometChat Core Integration:**
    - Calls SDK v5 (JavaScript WebRTC video).
-   - Transient messages (10 Hz unpersisted telemetry stream).
-   - Custom messages (persisted milestone events: reps, alerts, cues, session markers).
+   - Transient messages (10 Hz unpersisted telemetry stream with dual-transport BroadcastChannel sync).
+   - Custom messages (persisted milestone events: reps with form score & rating, alerts, cues, session markers).
    - Group per session (`kine-<sessionId>`).
    - Server-minted auth tokens via REST API.
-5. **Post-Session Analytics:** Comprehensive workout summary reconstructed from the CometChat group message history.
-6. **Public HTTPS Deployment:** Single Render container with verified camera permissions.
+7. **Rep Form Scoring Engine:** Evaluates depth ratio, peak knee valgus deviation, and movement tempo into a composite score (0–100) and qualitative tier ("excellent" | "good" | "needs_work").
+8. **Post-Session Analytics:** Comprehensive workout summary reconstructed from the CometChat group message history (`Summary.tsx`).
+9. **Public HTTPS Deployment:** Single Render container with verified camera permissions.
+
 
 ### ❌ Out-of-Scope (Strict Non-Goals)
 - User registration, billing, scheduling calendars, multiple exercise categories.

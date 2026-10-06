@@ -18,7 +18,6 @@ import {
   SCHEMA_VERSION,
   CLINICIAN_UID,
   PATIENT_UID,
-  VALGUS_THRESHOLD_PCT,
   type CoachingCueType,
   type KineCuePayload,
   type KineSessionMarkerPayload,
@@ -29,17 +28,31 @@ import {
 import { useTelemetryStream } from '../hooks/useTelemetryStream';
 import { springPresets } from '../styles/motionPresets';
 import { requestSession } from '../spikes/utils/tokenService';
+import {
+  ensureSessionGroup,
+  broadcastTelemetryEvent,
+  subscribeToBroadcastEvents,
+  extractCustomMessageData,
+  isDuplicateMessage,
+} from '../utils/telemetryTransport';
 
 export interface ClinicianViewProps {
   sessionId?: string;
   onEndSession?: () => void;
 }
 
-const COACHING_CUES: Array<{ id: CoachingCueType; label: string; icon: string }> = [
-  { id: 'knees_out', label: 'Knees Out', icon: '↔️' },
-  { id: 'slower', label: 'Slow Down', icon: '⏱️' },
-  { id: 'chest_up', label: 'Chest Up', icon: '⬆️' },
-  { id: 'good_depth', label: 'Good Depth', icon: '🎯' },
+export interface CoachingCueItem {
+  id: CoachingCueType;
+  label: string;
+  icon: string;
+  category: 'Stance' | 'Tempo' | 'Posture' | 'Depth';
+}
+
+const COACHING_CUES: CoachingCueItem[] = [
+  { id: 'knees_out', label: 'Knees Out', icon: '↔️', category: 'Stance' },
+  { id: 'slower', label: 'Slow Down', icon: '⏱️', category: 'Tempo' },
+  { id: 'chest_up', label: 'Chest Up', icon: '⬆️', category: 'Posture' },
+  { id: 'good_depth', label: 'Good Depth', icon: '🎯', category: 'Depth' },
 ];
 
 export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSessionId, onEndSession }) => {
@@ -59,9 +72,9 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
 
   const activeSessionId = sessionData?.sessionId || propSessionId || '';
 
-  // Telemetry stream subscription
+  // Telemetry stream subscription (active as soon as session ID is available)
   const { currentPose, isConnected: isTelemetryConnected } = useTelemetryStream(
-    callStatus === 'connected' ? activeSessionId : null
+    activeSessionId || null
   );
 
   // Motion values for smooth 60 fps interpolation
@@ -127,6 +140,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
         const chatSettings = new CometChat.AppSettingsBuilder()
           .subscribePresenceForAllUsers()
           .setRegion(session.region)
+          .enableAutoJoinForGroups(true)
           .build();
         await CometChat.init(session.appId, chatSettings);
 
@@ -136,18 +150,53 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
           await CometChat.login(session.authToken);
         }
 
-        // 4. Init Calls SDK v5
+        // 4. Ensure Clinician is joined to the session group
+        await ensureSessionGroup(session.sessionId);
+
+        // Register custom message listener for kine.rep and kine.alert immediately
+        const customListenerId = `kine-clinician-custom-${session.sessionId}`;
+        CometChat.addMessageListener(
+          customListenerId,
+          new CometChat.MessageListener({
+            onCustomMessageReceived: (customMessage: CometChat.CustomMessage) => {
+              const msgType = customMessage.getType() || customMessage.getSubType();
+              const customData = extractCustomMessageData(customMessage) as any;
+              const type = customData?.type || msgType;
+
+              if (type === 'kine.rep') {
+                const rep = customData as KineRepPayload;
+                const key = `rep_${rep.t}_${rep.n}`;
+                if (!isDuplicateMessage(key) && typeof rep.n === 'number') {
+                  setRepCount((prev) => Math.max(prev, rep.n));
+                }
+              } else if (type === 'kine.alert') {
+                const alert = customData as KineAlertPayload;
+                const key = `alert_${alert.t}_${alert.side}_${alert.repN}`;
+                if (!isDuplicateMessage(key)) {
+                  setRecentAlerts((prev) => {
+                    if (prev.some((a) => a.t === alert.t && a.repN === alert.repN && a.side === alert.side)) {
+                      return prev;
+                    }
+                    return [alert, ...prev.slice(0, 4)];
+                  });
+                }
+              }
+            },
+          })
+        );
+
+        // 5. Init Calls SDK v5
         await CometChatCalls.init({
           appId: session.appId,
           region: session.region as 'in' | 'eu' | 'us' | 'IN' | 'EU' | 'US',
         });
 
-        // 5. Login to Calls SDK
+        // 6. Login to Calls SDK
         if (!CometChatCalls.isUserLoggedIn()) {
           await CometChatCalls.loginWithAuthToken(session.authToken);
         }
 
-        // 6. Register Call Listeners
+        // 7. Register Call Listeners
         const unsubs: Array<() => void> = [];
         unsubs.push(
           CometChatCalls.addEventListener('onSessionJoined', () => {
@@ -161,11 +210,11 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
           })
         );
 
-        // 7. Generate Call Token
+        // 8. Generate Call Token
         const tokenResult = await CometChatCalls.generateToken(session.sessionId);
         const callToken = tokenResult.token;
 
-        // 8. Join Session Container
+        // 9. Join Session Container
         // MANDATORY INVARIANT: startAudioMuted: true to prevent acoustic feedback loop
         const callSettings: SessionSettings = {
           sessionType: 'VIDEO',
@@ -188,29 +237,6 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
           }
           if (!isCancelled) setCallStatus('connected');
         }
-
-        // Register custom message listener for kine.rep and kine.alert
-        const customListenerId = `kine-clinician-custom-${session.sessionId}`;
-        CometChat.addMessageListener(
-          customListenerId,
-          new CometChat.MessageListener({
-            onCustomMessageReceived: (customMessage: CometChat.CustomMessage) => {
-              const msgType = customMessage.getType() || customMessage.getSubType();
-              const customData = customMessage.getCustomData() as any;
-              const type = customData?.type || msgType;
-
-              if (type === 'kine.rep') {
-                const rep = customData as KineRepPayload;
-                if (typeof rep.n === 'number') {
-                  setRepCount(rep.n);
-                }
-              } else if (type === 'kine.alert') {
-                const alert = customData as KineAlertPayload;
-                setRecentAlerts((prev) => [alert, ...prev.slice(0, 4)]);
-              }
-            },
-          })
-        );
 
         callTeardownRef.current = () => {
           unsubs.forEach((unsub) => {
@@ -254,23 +280,52 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
     };
   }, [propSessionId, retryKey]);
 
-  // Dispatch Coaching Cue
+  // Dual-transport local BroadcastChannel listener for zero-latency reps and alerts
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    const unsubscribe = subscribeToBroadcastEvents(activeSessionId, {
+      onRep: (rep) => {
+        if (typeof rep.n === 'number') {
+          setRepCount((prev) => Math.max(prev, rep.n));
+        }
+      },
+      onAlert: (alert) => {
+        setRecentAlerts((prev) => {
+          if (prev.some((a) => a.t === alert.t && a.repN === alert.repN && a.side === alert.side)) {
+            return prev;
+          }
+          return [alert, ...prev.slice(0, 4)];
+        });
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeSessionId]);
+
+  // Dispatch Coaching Cue with Dual-Transport (BroadcastChannel + CometChat CustomMessage)
   const handleSendCue = async (cue: CoachingCueType, text: string) => {
     if (!activeSessionId) return;
 
     setActiveCueSent(cue);
     setTimeout(() => setActiveCueSent(null), 1200);
 
-    try {
-      const cuePayload: KineCuePayload = {
-        v: SCHEMA_VERSION,
-        sid: activeSessionId,
-        t: Date.now(),
-        type: 'kine.cue',
-        cue,
-        text,
-      };
+    const cuePayload: KineCuePayload = {
+      v: SCHEMA_VERSION,
+      sid: activeSessionId,
+      t: Date.now(),
+      type: 'kine.cue',
+      cue,
+      text,
+    };
 
+    // 1. Dual-transport: Instant cross-tab sync via BroadcastChannel
+    broadcastTelemetryEvent(activeSessionId, cuePayload);
+
+    // 2. CometChat CustomMessage for remote participant delivery
+    try {
       const customMsg = new CometChat.CustomMessage(
         activeSessionId,
         CometChat.RECEIVER_TYPE.GROUP,
@@ -279,8 +334,8 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
       );
       customMsg.shouldUpdateConversation(false);
       await CometChat.sendCustomMessage(customMsg);
-    } catch {
-      // Non-blocking cue delivery failure
+    } catch (err) {
+      console.warn('[Clinician] CometChat sendCustomMessage cue notice:', err);
     }
   };
 
@@ -339,10 +394,6 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
     }
   };
 
-  const isValgusAlert =
-    (currentPose?.valgusDevPct.L !== null && (currentPose?.valgusDevPct.L ?? 0) > VALGUS_THRESHOLD_PCT) ||
-    (currentPose?.valgusDevPct.R !== null && (currentPose?.valgusDevPct.R ?? 0) > VALGUS_THRESHOLD_PCT);
-
   return (
     <div
       style={{
@@ -392,10 +443,6 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
               {CLINICIAN_UID}
             </span>
           </div>
-          <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            Session Room: <strong>{activeSessionId || 'Generating...'}</strong> • Acoustic Guard:{' '}
-            <span style={{ color: 'var(--status-stable)', fontWeight: 600 }}>Mic Muted 🔇</span>
-          </span>
         </div>
 
         {/* Action Buttons */}
@@ -461,49 +508,6 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
           </button>
         </div>
       </div>
-
-      {/* Valgus Form Warning Banner */}
-      {isValgusAlert && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={isValgusAlert ? { opacity: [1, 0.65, 1], y: 0 } : { opacity: 1, y: 0 }}
-          transition={isValgusAlert ? { repeat: Infinity, duration: 1.2, ease: 'easeInOut' } : {}}
-          exit={{ opacity: 0, y: -10 }}
-          style={{
-            padding: 'var(--space-3) var(--space-4)',
-            borderRadius: 'var(--radius-control)',
-            backgroundColor: 'rgba(239, 68, 68, 0.12)',
-            border: '1px solid var(--status-critical)',
-            color: 'var(--status-critical)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-          }}
-        >
-          <span>
-            ⚠️ <strong>Biomechanical Alert:</strong> Knee valgus collapse detected (&gt; 8.0% deviation).
-            Prompt patient with "Knees Out".
-          </span>
-          <button
-            type="button"
-            onClick={() => handleSendCue('knees_out', 'Knees Out!')}
-            style={{
-              padding: 'var(--space-1) var(--space-3)',
-              borderRadius: 'var(--radius-pill)',
-              border: 'none',
-              backgroundColor: 'var(--status-critical)',
-              color: 'var(--text-on-dark-primary)',
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            Send "Knees Out" Cue
-          </button>
-        </motion.div>
-      )}
 
       {/* 1. Substantially Enlarged Camera Window Container (Full Width) */}
       <div
@@ -634,6 +638,49 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
             }}
           />
           <span>{isTelemetryConnected ? '10 Hz Telemetry Live' : 'Waiting for telemetry...'}</span>
+        </div>
+
+        {/* Top-Right Feed Display Controls */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 'var(--space-3)',
+            right: 'var(--space-3)',
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              if (callContainerRef.current) {
+                if (document.fullscreenElement) {
+                  document.exitFullscreen().catch(() => {});
+                } else {
+                  callContainerRef.current.requestFullscreen().catch(() => {});
+                }
+              }
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-1)',
+              padding: 'var(--space-1) var(--space-3)',
+              borderRadius: 'var(--radius-pill)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              backgroundColor: 'rgba(19, 20, 23, 0.75)',
+              backdropFilter: 'blur(4px)',
+              fontSize: '0.75rem',
+              color: 'var(--text-on-dark-primary)',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            <span>⛶</span>
+            <span>Fullscreen View</span>
+          </button>
         </div>
       </div>
 
@@ -912,7 +959,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
                   color: 'var(--text-muted)',
                 }}
               >
-                Recent Form Alerts
+                Live Clinical Event Stream
               </span>
               <span
                 style={{
@@ -924,7 +971,7 @@ export const Clinician: React.FC<ClinicianViewProps> = ({ sessionId: propSession
                   color: recentAlerts.length > 0 ? 'var(--status-critical)' : 'var(--status-stable)',
                 }}
               >
-                {recentAlerts.length > 0 ? `${recentAlerts.length} Recorded` : '0 Recorded'}
+                {recentAlerts.length > 0 ? `${recentAlerts.length} Alerts Logged` : '0 Alerts Logged'}
               </span>
             </div>
 

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { UserRole } from '@kinesio/shared';
 import { createOrJoinSession, runBootDiagnostics } from './cometchatRest.js';
+import { validateEnvironment } from './config/envValidator.js';
 
 // Resolve directory and load monorepo root .env
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +21,15 @@ dotenv.config(); // Fallback for process.cwd()
 
 // Run diagnostic credential validation on boot
 runBootDiagnostics();
+const envResult = validateEnvironment(process.env);
+if (!envResult.isValid) {
+  console.error('\n⚠️ [ENV VALIDATION FAILED]');
+  envResult.errors.forEach(err => console.error(`   ❌ ${err}`));
+  console.error('   Please verify credentials in .env before initiating live sessions.\n');
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Fatal configuration: Invalid environment in production');
+  }
+}
 
 export const app: Express = express();
 

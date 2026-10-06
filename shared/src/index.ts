@@ -45,6 +45,8 @@ export interface KinePosePayload extends Envelope {
   reps: number;
 }
 
+export type RepFormRating = "excellent" | "good" | "needs_work";
+
 /**
  * CHANNEL: CUSTOM PERSISTED (CometChat.sendCustomMessage to RECEIVER_TYPE.GROUP)
  * Emitted when a validated squat repetition completes.
@@ -56,6 +58,8 @@ export interface KineRepPayload extends Envelope {
   depth: SquatDepthRating;
   durMs: number;
   tempo: SquatTempo;
+  formScore?: number;
+  formRating?: RepFormRating;
 }
 
 /**

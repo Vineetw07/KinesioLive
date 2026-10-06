@@ -204,3 +204,179 @@ export class ExponentialMovingAverageFilter {
 // Aliases for compatibility across engine barrel exports and test suites
 export { SlidingMedianFilter as MedianFilter };
 export { ExponentialMovingAverageFilter as EmaFilter };
+
+export interface OneEuroFilterOptions {
+  /** Minimum cutoff frequency in Hz (default: 1.0). Lower values eliminate stationary jitter. */
+  minCutoff?: number;
+  /** Speed coefficient (default: 0.007). Higher values dynamically expand cutoff to eliminate phase lag. */
+  beta?: number;
+  /** Cutoff frequency for derivative filtering in Hz (default: 1.0). */
+  dCutoff?: number;
+}
+
+/**
+ * 1€ (One-Euro) Adaptive Cutoff Filter (Casiez, Roussel, Vogel, CHI 2012).
+ *
+ * Implements an adaptive low-pass filter specifically tailored for human biomechanics:
+ *   f_c = f_{c,min} + beta * |dx_hat|
+ *   alpha = 1 / (1 + 1 / (2 * pi * f_c * T))
+ *   x_hat_i = alpha * x_i + (1 - alpha) * x_hat_{i-1}
+ *
+ * Latency vs. Jitter Invariant:
+ * - At low velocity (standing/stabilizing): cutoff relaxes to minCutoff (e.g. 1.0 Hz),
+ *   eliminating digit flicker and jitter.
+ * - At high velocity (rapid descent/ascent): cutoff scales dynamically with |dx|,
+ *   driving alpha -> 1 and eliminating phase lag.
+ */
+export class OneEuroFilter {
+  public minCutoff: number;
+  public beta: number;
+  public dCutoff: number;
+
+  private xHat: number | null = null;
+  private dxHat: number = 0;
+  private lastTimestamp: number | null = null;
+  private lastFc: number = 1.0;
+  private lastAlpha: number = 0.5;
+
+  /**
+   * Constructs a OneEuroFilter.
+   * Supports either positional arguments (minCutoff, beta, dCutoff) or an options object.
+   */
+  constructor(
+    minCutoffOrOptions?: number | OneEuroFilterOptions,
+    beta?: number,
+    dCutoff?: number
+  ) {
+    if (typeof minCutoffOrOptions === 'object' && minCutoffOrOptions !== null) {
+      const opts = minCutoffOrOptions;
+      this.minCutoff = Number.isFinite(opts.minCutoff) && (opts.minCutoff ?? 0) > 0 ? (opts.minCutoff as number) : 1.0;
+      this.beta = Number.isFinite(opts.beta) && (opts.beta ?? 0) >= 0 ? (opts.beta as number) : 0.007;
+      this.dCutoff = Number.isFinite(opts.dCutoff) && (opts.dCutoff ?? 0) > 0 ? (opts.dCutoff as number) : 1.0;
+    } else {
+      const mc = minCutoffOrOptions as number | undefined;
+      this.minCutoff = Number.isFinite(mc) && (mc ?? 0) > 0 ? (mc as number) : 1.0;
+      this.beta = Number.isFinite(beta) && (beta ?? 0) >= 0 ? (beta as number) : 0.007;
+      this.dCutoff = Number.isFinite(dCutoff) && (dCutoff ?? 0) > 0 ? (dCutoff as number) : 1.0;
+    }
+  }
+
+  /**
+   * Computes the smoothing factor alpha from cutoff frequency (Hz) and sampling period T (seconds).
+   * Equation: alpha = 1 / (1 + 1 / (2 * pi * cutoff * dt))
+   */
+  public static computeAlpha(cutoff: number, dt: number): number {
+    if (cutoff <= 0 || dt <= 0) return 0;
+    const denominator = 1.0 + 1.0 / (2.0 * Math.PI * cutoff * dt);
+    if (!Number.isFinite(denominator) || denominator === 0) return 0;
+    return Math.min(1.0, Math.max(0.0, 1.0 / denominator));
+  }
+
+  /**
+   * Filters the incoming signal sample.
+   *
+   * @param val Raw incoming scalar value or null (tracking loss).
+   * @param timestamp Optional timestamp in milliseconds or seconds.
+   * @returns Filtered scalar value, or null if tracking is lost.
+   */
+  public filter(val: number | null | undefined, timestamp?: number): number | null {
+    if (val === null || val === undefined || !Number.isFinite(val)) {
+      this.reset();
+      return null;
+    }
+
+    // 1st frame initialization
+    if (this.xHat === null) {
+      this.xHat = val;
+      this.dxHat = 0;
+      this.lastTimestamp = timestamp !== undefined && Number.isFinite(timestamp) ? timestamp : null;
+      this.lastFc = this.minCutoff;
+      this.lastAlpha = 1.0;
+      return val;
+    }
+
+    // Determine sampling period dt (seconds)
+    let dt = 1.0 / 30.0; // Default nominal 30 FPS rate
+    if (timestamp !== undefined && Number.isFinite(timestamp) && this.lastTimestamp !== null) {
+      const delta = timestamp - this.lastTimestamp;
+      if (delta > 0) {
+        // Automatically determine if timestamp is in ms (delta > 10) or seconds
+        dt = delta > 10 ? delta / 1000.0 : delta;
+      }
+    }
+
+    if (timestamp !== undefined && Number.isFinite(timestamp)) {
+      this.lastTimestamp = timestamp;
+    }
+
+    // Safeguard against non-positive dt
+    if (dt <= 0.0001) {
+      dt = 0.0001;
+    }
+
+    // 1. Estimate raw derivative and filter it
+    const dx = (val - this.xHat) / dt;
+    const alphaD = OneEuroFilter.computeAlpha(this.dCutoff, dt);
+    this.dxHat = alphaD * dx + (1.0 - alphaD) * this.dxHat;
+
+    // 2. Compute dynamic cutoff frequency: fc = minCutoff + beta * |dx_hat|
+    const fc = this.minCutoff + this.beta * Math.abs(this.dxHat);
+    this.lastFc = fc;
+
+    // 3. Filter position signal: x_hat = alpha * val + (1 - alpha) * x_hat_{prev}
+    const alpha = OneEuroFilter.computeAlpha(fc, dt);
+    this.lastAlpha = alpha;
+    this.xHat = alpha * val + (1.0 - alpha) * this.xHat;
+
+    return this.xHat;
+  }
+
+  /**
+   * Alias for filter(val, timestamp) for pipeline compatibility.
+   */
+  public update(val: number | null | undefined, timestamp?: number): number | null {
+    return this.filter(val, timestamp);
+  }
+
+  /**
+   * Resets the filter to uninitialized state.
+   */
+  public reset(): void {
+    this.xHat = null;
+    this.dxHat = 0;
+    this.lastTimestamp = null;
+    this.lastFc = this.minCutoff;
+    this.lastAlpha = 0.5;
+  }
+
+  /**
+   * Returns current internal state or null.
+   */
+  public getCurrent(): number | null {
+    return this.xHat;
+  }
+
+  /**
+   * Returns current filtered derivative estimate.
+   */
+  public getDerivative(): number {
+    return this.dxHat;
+  }
+
+  /**
+   * Returns last computed adaptive cutoff frequency.
+   */
+  public getCutoff(): number {
+    return this.lastFc;
+  }
+
+  /**
+   * Returns last computed smoothing factor alpha.
+   */
+  public getAlpha(): number {
+    return this.lastAlpha;
+  }
+}
+
+export { OneEuroFilter as EuroFilter };
+

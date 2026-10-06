@@ -4,10 +4,17 @@
   "version": "0.1.0",
   "description": "KinesioLive - Real-Time Biomechanical Telemetry & Telerehabilitation Monorepo",
   "scripts": {
+    "clean:src": "pnpm -C client run clean:src",
+    "check:hygiene": "node -e \"const fs=require('fs'), path=require('path'); const s=path.resolve('client/src'); const bad=fs.existsSync(s)?fs.readdirSync(s).filter(f=>f.endsWith('.js')||f.endsWith('.d.ts')):[]; if(bad.length){console.error('Dirty build artifacts found in client/src:', bad); process.exit(1);} else {console.log('[OK] client/src is clean of compiled artifacts');}\"",
+    "check:env": "node --experimental-strip-types server/src/config/envValidator.ts",
+    "check": "node scripts/check-all.cjs",
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "vitest run",
-    "smoketest": "node --experimental-strip-types tests/e2e/smoketest_deployed.ts"
+    "smoketest": "node --experimental-strip-types tests/e2e/smoketest_deployed.ts",
+    "demo:patient": "powershell -ExecutionPolicy Bypass -File scripts/launch-demo.ps1 -Role patient",
+    "demo:clinician": "powershell -ExecutionPolicy Bypass -File scripts/launch-demo.ps1 -Role clinician",
+    "demo:dual": "powershell -ExecutionPolicy Bypass -File scripts/launch-demo.ps1 -Role both"
   },
   "devDependencies": {
     "typescript": "^5.7.3",
