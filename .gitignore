@@ -46,7 +46,6 @@ docs/archive/
 *.diff
 *.patch
 cometchat-skills/
-.cometchat/
 .claude/
 .cursor/
 .cline/
