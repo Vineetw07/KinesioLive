@@ -7,6 +7,11 @@
 [![CometChat Chat v4](https://img.shields.io/badge/CometChat%20Chat-v4-7C3AED?style=for-the-badge)](https://www.cometchat.com/docs/chat-sdk/web/v4/overview)
 [![Tests Passing](https://img.shields.io/badge/Tests-562%20Passed-brightgreen?style=for-the-badge)](https://vitest.dev/)
 
+
+
+https://github.com/user-attachments/assets/026fe415-836f-4047-85f7-67d15591b2af
+
+
 **KinesioLive** is a real-time tele-rehabilitation platform connecting patients and physical therapists over live WebRTC video, powered by in-browser computer vision and **CometChat's unified communications engine**. 
 
 While the patient performs rehabilitation exercises (bodyweight squats), in-browser MediaPipe models track 3D body kinematics and stream **10 Hz joint telemetry** across CometChat's transient message bus into the clinician's live heads-up display (HUD). When form breakdowns such as knee valgus (inward knee collapse) occur, KinesioLive detects the deviation, alerts the clinician, enables instant coaching cues, and persists the entire session as a permanent medical exercise log inside CometChat group history.
